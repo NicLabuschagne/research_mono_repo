@@ -1,0 +1,77 @@
+{
+  "kind": "validation",
+  "git": {
+    "commit": "4289cca",
+    "dirty": true
+  },
+  "config_hash": "11b091edfd",
+  "selected_params": {
+    "window": 5,
+    "threshold": 0.4,
+    "direction": -1
+  },
+  "n_combos_tried": 24,
+  "folds": [
+    [
+      "2026-10-26",
+      "2026-10-26"
+    ],
+    [
+      "2026-10-26",
+      "2026-10-26"
+    ],
+    [
+      "2026-10-26",
+      "2026-10-26"
+    ],
+    [
+      "2026-10-26",
+      "2026-10-26"
+    ]
+  ],
+  "development": {
+    "sharpe": -84.58294888234927,
+    "total_return": -470.5568476264822,
+    "max_drawdown": -472.5352325630279,
+    "trades": 200
+  },
+  "selected_across_folds": {
+    "mean_sharpe": -86.41426321984227,
+    "std_sharpe": 36.29885768513722,
+    "min_sharpe": -134.0697673580023,
+    "pct_folds_positive": 0.0
+  },
+  "walk_forward_oos": {
+    "sharpe": -50.97565319375296,
+    "total_return": -198.67568529872239,
+    "max_drawdown": -226.7281133766212,
+    "trades": 43
+  },
+  "gates": [
+    {
+      "gate": "mean fold Sharpe",
+      "value": -86.41426321984227,
+      "minimum": 0.5,
+      "passed": false
+    },
+    {
+      "gate": "share of folds positive",
+      "value": 0.0,
+      "minimum": 0.6,
+      "passed": false
+    },
+    {
+      "gate": "development trades",
+      "value": 200.0,
+      "minimum": 100.0,
+      "passed": true
+    },
+    {
+      "gate": "walk-forward OOS Sharpe",
+      "value": -50.97565319375296,
+      "minimum": 0.3,
+      "passed": false
+    }
+  ],
+  "gates_passed": false
+}

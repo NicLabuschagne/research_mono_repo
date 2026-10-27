@@ -6,3 +6,5 @@ statsmodels
 scikit-learn
 scipy
 pyarrow
+pyyaml
+pytest

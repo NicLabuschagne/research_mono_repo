@@ -1,0 +1,35 @@
+# Overnight crush-residual reversion (ZS vs ZM/ZL). Every number the research uses lives here.
+data_path: data/raw/latest_df_backup.parquet     # relative to the repo root
+
+split:
+  development_start: 2021-01-01
+  holdout_start: 2024-12-01        # untouched until validation passes every gate
+  holdout_end: null
+
+# Selected params: the ones the gates are checked on and the holdout runs with.
+# Pick them from the validation plots (a plateau, not the best cell), then re-run validation.
+strategy:
+  threshold: 1.5                   # entry |z|
+  profit_sigma: 1.0
+  stop_sigma: 3.0
+  holding_hours: 12
+  bar_minutes: 5                   # not tunable here: bars are built once per run
+  cost_ticks: 1.0                  # per leg, round trip. A stress, not a tuning knob: keep it out of the grid
+
+validation:
+  n_folds: 6
+  periods_per_year: 252
+  grid:
+    threshold: [1.5, 2.0, 2.5]
+    profit_sigma: [0.5, 1.0, 2.0]
+    stop_sigma: [2.0, 3.0, 4.0]
+    holding_hours: [6, 12, 24]
+  heatmaps:                        # [x, y] pairs; other params held at the selected values
+    - [stop_sigma, profit_sigma]
+    - [holding_hours, threshold]
+
+gates:
+  min_mean_sharpe: 1.0
+  min_pct_folds_positive: 0.67
+  min_trades: 150
+  min_wf_oos_sharpe: 0.5

@@ -1,58 +1,59 @@
-# Overnight crush-residual reversion (ZS vs ZM / ZL)
+# Research Monorepo
 
-Research on how soybeans trade against meal and oil intraday, and whether overnight
-dislocations in that relationship are tradeable.
+**A repeatable pipeline for quantitative trading research.** Every strategy goes through the same process, from hypothesis to a locked holdout. Every number comes from a config file, and every result is saved with the config and git commit that produced it.
 
-## Pipeline
+## The research cycle
 
-| File | What it does |
-|---|---|
-| [`data_ingest.py`](src/crush_strategy/data_ingest.py) | 1-minute ZS/ZM/ZL data -> sessions, switch-free returns, contract-switch detection, back-adjusted prices, session-aligned 5-minute bars |
-| [`kalman_filter.py`](src/crush_strategy/kalman_filter.py) | Kalman filter for `log ZS = alpha + b_meal log ZM + b_oil log ZL`; hedge frozen at the previous session close; residual |
-| [`features.py`](src/crush_strategy/features.py) | Residual z-score (previous 20 days, same session type) and the evening-session signal |
-| [`strategy.py`](src/crush_strategy/strategy.py) | Final strategy: next-open entry, triple-barrier exits, costs, performance, equity/drawdown chart |
-| [`parameter_sensitivity.py`](src/crush_strategy/parameter_sensitivity.py) | Heatmaps of Sharpe and return across exit barriers, entry threshold, time stop and cost (development only) |
-| [`meta_model_reference.py`](src/crush_strategy/meta_model_reference.py) | Reference only: feature engineering, IC table, meta-model walk-forward (did not survive the holdout) |
+```
+ hypothesis ─► data checks ─► features & IC ─► walk-forward validation ─► gates ─► holdout (once)
+  README.md    research.ipynb  core_quant.        validate.py               config     holdout.py
+                               validation         grid × folds              .yaml
+```
 
-Run: put the raw 1-minute parquet at `data/latest_df_backup.parquet`, then `python src/crush_strategy/strategy.py`.
+1. **Hypothesis first.** Write the thesis, why it should pay, and the kill criteria before looking at results.
+2. **Holdout locked up front.** `holdout_start` is chosen before exploring and never moved.
+3. **Explore** in the notebook: data integrity, features, information coefficient (IC) and its decay.
+4. **Validate** on the development period only. Run the parameter grid across walk-forward folds, plus a walk-forward selection that measures the tuning process itself out of sample.
+5. **Gates** (Sharpe, consistency across folds, trade count, walk-forward out-of-sample Sharpe) must all pass before the holdout unlocks.
+6. **Holdout runs once**, on the exact config that passed.
 
-## Final specification
+## Layout
 
-- **Signal:** evening session (19:00-07:45 CT), first 5-minute bar with |z| >= 2 on the Kalman residual; re-arms below 0.5
-- **Entry:** next bar's open; hedge frozen at the signal bar
-- **Exits (first touched):** profit 1 sigma, stop 3 sigma, time 12 hours
-- **Costs:** 1 tick per leg round trip (0.58 c/bu on the spread); every signal taken, one trade at a time
+```
+core_quant/              strategy-agnostic engine, written once
+  walk_forward.py        folds, grid, walk-forward selection, gates, holdout lock
+  config.py              YAML → dataclasses, run store (config + git commit + metrics)
+  validation.py          IC, Newey-West t-stats, block permutation, bootstrap, Ljung-Box
+  feature_registry.py    reusable features and signals
+  model_registry/        sklearn models by name, leak-free walk-forward predictions
+  plots.py, theme.py     tuning heatmaps, parameter curves, fold Sharpe, equity
+strategies/<name>/       one folder per idea
+  README.md              hypothesis, data notes, run log
+  config.yaml            every parameter, split, grid and gate
+  strategy.py            dataclasses + evaluate(params, start, end)
+  research.ipynb         scratch exploration
+  validate.py, holdout.py
+  runs/                  every validation / holdout run, saved
+strategies/_template/    copy this to start a new strategy
+data/{raw,processed}     market data (not in git)
+```
 
-## Results (1 tick per leg; % of bean notional, USD per 5,000 bu hedged)
+A strategy only supplies **`evaluate(params, start, end)`**, which returns per-period returns and trade counts. Everything else is shared.
 
-| Sample | Trades | Hit rate | Net / trade | Return | Max DD | Sharpe |
-|---|---|---|---|---|---|---|
-| Development, Jan 2021 - Nov 2024 | 191 | 79% | 0.84 c | +11.5% | -2.8% | 1.57 |
-| Holdout, Dec 2024 - Dec 2025 (run once) | 36 | 69% | 0.06 c | +0.1% | -2.5% | 0.07 |
+## Quickstart
 
-![Equity and drawdown](src/crush_strategy/output/equity_drawdown.png)
+```bash
+pip install -r requirements.txt && pip install -e .
+pytest
 
-## Parameter sensitivity (development only)
+cp -r strategies/_template strategies/my_idea          # then fix the imports in validate.py / holdout.py
+python -m strategies.my_idea.validate                   # tune: read runs/<latest>/
+python -m strategies.my_idea.holdout                    # once, after the gates pass
+```
 
-![Parameter sensitivity](src/crush_strategy/figures/parameter_sensitivity.png)
+## Strategies
 
-Sensitivity maps, not an optimisation: settings were fixed before the holdout. How to read them:
-- **Entry threshold x time stop:** a broad plateau (Sharpe ~1.3-1.7 for |z| 1.5-2.5 at 12-24h); only 6h is clearly weaker.
-  The result does not hinge on one exact threshold.
-- **Entry threshold x cost:** smooth and monotonic; every extra half tick per leg costs ~0.5-0.7 Sharpe at every threshold.
-- **Exit grid:** the final setting (profit 1 sigma, stop 3 sigma) is the best cell but sits in the grid's corner, and
-  performance rises steadily toward small profit targets and wide stops. The edge of the grid is not a confirmed
-  optimum; that direction was not explored further to avoid tuning after the holdout.
-
-## What was learned
-
-- **Relationship:** beans hedge against products at about 0.59 meal / 0.36 oil, below board-crush value shares.
-  The Kalman filter gave the tightest residual and the most stable hedge ratios.
-- **Dynamics:** dislocations are partly transient (revert within hours, mostly overnight) and partly permanent.
-  The day session shows no reversion; on daily bars large dislocations tend to continue.
-- **Economics:** the edge is roughly 0.4-0.7 sigma per trade and larger in high-volatility regimes; costs are fixed
-  in cents, so profitability depends on volatility and execution. The holdout year lacked high-volatility dislocations.
-- **Method notes:** daily refits fake mean reversion (always measure with the hedge fixed); the z-score window was
-  chosen on calibration, not results; meta-model features picked in development did not hold out of sample.
-
-Raw market data is not included in this repository.
+| Strategy | Idea | Status |
+|---|---|---|
+| [`crush_strategy`](strategies/crush_strategy/output/README.md) | Overnight reversion of the soybean crush residual (ZS vs ZM/ZL), Kalman hedge | Validation: passes 3 of 4 gates, fails the walk-forward out-of-sample Sharpe (0.24 vs 0.5) |
+| [`wheat_microstructure`](strategies/wheat_microstructure/README.md) | Order flow in ZW tick data | In progress: data checks |

@@ -1,0 +1,31 @@
+# Wheat order-flow imbalance. Every number the research uses lives here.
+data_glob: WHEAT_futures_tick_*.parquet         # files in data/raw
+
+split:
+  development_start: 2025-11-20 00:00:00
+  holdout_start: 2026-08-01 00:00:00         # untouched until validation passes every gate
+  holdout_end: null
+
+# Selected params: the gates are checked on these and the holdout runs with them.
+strategy:
+  bar_seconds: 60
+  window: 5
+  threshold: 0.4
+  direction: -1
+  cost_ticks: 0.5                            # a stress, not a tuning knob: keep it out of the grid
+
+validation:
+  n_folds: 4
+  periods_per_year: 302400                   # ~20 trading hours x 60 one-minute bars x 252 days
+  grid:
+    window: [10, 20, 40]
+    threshold: [0.2, 0.4, 0.6]
+    direction: [-1, 1]
+  heatmaps:
+    - [window, threshold]
+
+gates:
+  min_mean_sharpe: 0.5
+  min_pct_folds_positive: 0.6
+  min_trades: 100
+  min_wf_oos_sharpe: 0.3

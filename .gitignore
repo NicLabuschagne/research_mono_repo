@@ -6,4 +6,5 @@ __marimo__/
 # raw market data is not redistributed
 *.parquet
 data/
-src/crush_strategy/output/trades.csv
+strategies/crush_strategy/output/trades.csv
+*.egg-info/

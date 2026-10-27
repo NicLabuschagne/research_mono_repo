@@ -1,0 +1,34 @@
+data_glob: WHEAT_futures_tick_*.csv
+split:
+  development_start: 2026-10-26 00:00:00
+  holdout_start: 2026-10-27 00:00:00
+  holdout_end: null
+strategy:
+  bar_seconds: 60
+  window: 5
+  threshold: 0.4
+  direction: -1
+  cost_ticks: 0.5
+validation:
+  n_folds: 4
+  periods_per_year: 302400
+  grid:
+    window:
+    - 10
+    - 20
+    - 40
+    threshold:
+    - 0.2
+    - 0.4
+    - 0.6
+    direction:
+    - -1
+    - 1
+  heatmaps:
+  - - window
+    - threshold
+gates:
+  min_mean_sharpe: 0.5
+  min_pct_folds_positive: 0.6
+  min_trades: 100
+  min_wf_oos_sharpe: 0.3

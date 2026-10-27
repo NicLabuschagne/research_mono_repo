@@ -1,0 +1,5 @@
+,gate,value,minimum,passed
+0,mean fold Sharpe,-86.41426321984227,0.5,False
+1,share of folds positive,0.0,0.6,False
+2,development trades,200.0,100.0,True
+3,walk-forward OOS Sharpe,-50.97565319375296,0.3,False
