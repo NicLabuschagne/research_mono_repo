@@ -51,6 +51,8 @@ class StrategyConfig:
     bar_minutes: int = 5
     cost_ticks: float = 1.0      # per leg, round trip
     min_hours_left: float = 3.0  # skip signals with less time than this to the session close
+    entry_delay_minutes: float = 0.0   # execution: start entering this long after the next bar's open
+    entry_window_minutes: float = 0.0  # execution: build in equal slices at each bar's open over this window (0 = one fill)
 
 
 @dataclass(frozen=True)
@@ -74,9 +76,12 @@ def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyC
     bar_time = bars.index.values
     session_last_bar = pd.Series(np.arange(len(bars))).groupby(session).transform("max").values
 
+    delay_bars = int(config.entry_delay_minutes // config.bar_minutes)
+    slices = max(1, int(config.entry_window_minutes // config.bar_minutes))
+
     trades, next_free_bar = [], -1
     for signal in signals.itertuples():
-        signal_bar, entry_bar = signal.signal_position, signal.signal_position + 1
+        signal_bar, entry_bar = signal.signal_position, signal.signal_position + 1 + delay_bars
         if entry_bar <= next_free_bar:                     # still in the previous trade
             continue
         if entry_bar >= len(bars) or session[entry_bar] != session[signal_bar]:
@@ -96,8 +101,10 @@ def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyC
         def hedged_residual(prices, index):
             return prices["ZS"][index] - (alpha + beta_meal * prices["ZM"][index] + beta_oil * prices["ZL"][index])
 
-        entry_residual = hedged_residual(log_open, entry_bar)
-        path = np.arange(entry_bar, last_bar + 1)
+        # equal slices at the open of each bar in the build window; barriers apply once fully built
+        build = np.arange(entry_bar, min(entry_bar + slices, session_last_bar[entry_bar] + 1))
+        entry_residual = hedged_residual(log_open, build).mean()
+        path = np.arange(build[-1], max(last_bar, build[-1]) + 1)
         favourable = signal.direction * (hedged_residual(log_close, path) - entry_residual)
 
         sigma = bars["z_std"].values[signal_bar]
@@ -117,7 +124,8 @@ def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyC
             side="short beans / long products" if signal.direction < 0 else "long beans / short products",
             entry_z=signal.entry_z, beta_meal=beta_meal, beta_oil=beta_oil,
             sigma_cents=sigma * bean_price, bean_price_cents=bean_price,
-            exit_reason=exit_reason, holding_minutes=(exit_step + 1) * config.bar_minutes,
+            entry_slices=len(build),
+            exit_reason=exit_reason, holding_minutes=(path[exit_step] - entry_bar + 1) * config.bar_minutes,
             gross_cents=favourable[exit_step] * bean_price,
         ))
         next_free_bar = path[exit_step]

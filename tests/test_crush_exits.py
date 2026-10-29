@@ -42,3 +42,26 @@ def test_min_hours_left_skips_late_signals():
     trades = simulate_trades(bars, signals_at([late, early]),
                              StrategyConfig(holding_hours=12, min_hours_left=1.0))
     assert list(trades["entry_bar"]) == [early + 1]
+
+
+def ramp_bars() -> pd.DataFrame:
+    """Beans rise 1 tick-ish per bar, products flat: the residual climbs steadily."""
+    bars = flat_bars(sessions=1, bars_per_session=60)
+    bars["ZS_adj_open"] = bars["ZS_adj_close"] = 1200.0 * np.exp(np.arange(60) * 1e-4)
+    bars["z_std"] = 1.0                                            # barriers never hit: time exit only
+    return bars
+
+
+def test_entry_delay_shifts_the_fill():
+    trades = simulate_trades(ramp_bars(), signals_at([5]), StrategyConfig(min_hours_left=0.0, entry_delay_minutes=15))
+    assert trades["entry_bar"].iloc[0] == 6 + 3
+
+
+def test_entry_window_averages_the_fill_price():
+    bars = ramp_bars()
+    one = simulate_trades(bars, signals_at([5]), StrategyConfig(min_hours_left=0.0))
+    twap = simulate_trades(bars, signals_at([5]), StrategyConfig(min_hours_left=0.0, entry_window_minutes=20))
+    assert twap["entry_slices"].iloc[0] == 4 and one["exit_bar"].iloc[0] == twap["exit_bar"].iloc[0]
+    # short beans into a rising residual: averaging in at higher prices loses less (log, x bean price at the signal bar)
+    expected = -(np.log(bars["ZS_adj_close"].iloc[59]) - np.log(bars["ZS_adj_open"].iloc[6:10]).mean()) * bars["ZS_adj_close"].iloc[5]
+    assert np.isclose(twap["gross_cents"].iloc[0], expected)

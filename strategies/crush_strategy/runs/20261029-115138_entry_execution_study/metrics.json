@@ -1,0 +1,45 @@
+{
+  "kind": "entry_execution_study",
+  "git": {
+    "commit": "148db37",
+    "dirty": true
+  },
+  "variants": [
+    [
+      "delay",
+      0
+    ],
+    [
+      "delay",
+      15
+    ],
+    [
+      "delay",
+      30
+    ],
+    [
+      "delay",
+      60
+    ],
+    [
+      "delay",
+      90
+    ],
+    [
+      "twap",
+      15
+    ],
+    [
+      "twap",
+      30
+    ],
+    [
+      "twap",
+      60
+    ],
+    [
+      "twap",
+      90
+    ]
+  ]
+}

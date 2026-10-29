@@ -1,0 +1,54 @@
+data_path: data/raw/latest_df_backup.parquet
+split:
+  development_start: 2021-01-01
+  holdout_start: 2024-12-01
+  holdout_end: null
+strategy:
+  threshold: 1.5
+  profit_sigma: 1.0
+  stop_sigma: 4.0
+  holding_hours: 12
+  bar_minutes: 5
+  cost_ticks: 1.0
+  min_hours_left: 3.0
+  entry_delay_minutes: 0.0
+  entry_window_minutes: 0.0
+validation:
+  n_folds: 6
+  periods_per_year: 252
+  grid:
+    threshold:
+    - 1.5
+    - 2.0
+    - 2.5
+    profit_sigma:
+    - 0.5
+    - 1.0
+    - 1.5
+    - 2.0
+    stop_sigma:
+    - 3.0
+    - 4.0
+    - .inf
+    holding_hours:
+    - 6
+    - 8
+    - 12
+    min_hours_left:
+    - 0.0
+    - 2.0
+    - 3.0
+    - 4.0
+    - 6.0
+  heatmaps:
+  - - stop_sigma
+    - profit_sigma
+  - - holding_hours
+    - threshold
+  - - min_hours_left
+    - threshold
+gates:
+  min_mean_sharpe: 1.0
+  min_pct_folds_positive: 0.67
+  min_trades: 150
+  min_wf_oos_sharpe: 0.5

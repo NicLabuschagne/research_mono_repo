@@ -14,6 +14,7 @@ with the products for a few hours and then snap back. The strategy trades that s
 | `config.yaml` | Every param, the split dates, the validation grid and the gates |
 | `validate.py` | Walk-forward validation over the grid on development only; results, tear sheet and gates saved to `runs/` |
 | `holdout.py` | One-time holdout, locked until the latest validation passes every gate on the current config |
+| `entry_execution_study.py` | Research: delayed and TWAP entries, and the lots each execution window supports |
 
 Run: put the raw 1-minute parquet at `data/raw/latest_df_backup.parquet`, then `python -m strategies.crush_strategy.validate`.
 Every run saves a tear sheet (`tearsheet.png`, metrics in `metrics.json`, `monthly_returns.csv`).
@@ -41,8 +42,50 @@ Development walk-forward: out-of-sample Sharpe 2.53, all 6 folds positive, every
 version of this strategy (Sharpe 0.07) before this recalibration. No choice below was made on holdout data,
 but its weakness was known. A clean test needs data after Dec 2025.
 
-About 6 trades a month (1-16), median hold ~5 h. Capacity is set by meal: ~10 bean contracts per trade keeps
-the hedge at ~4% of evening meal volume in the 30 minutes after entry (p90 10%).
+About 6 trades a month (1-16), median hold ~5 h.
+
+## Execution, capacity and P&L scenarios
+
+**Working the entry** (`entry_execution_study.py`, `runs/20261029-115138_entry_execution_study`). Reversion starts
+almost at once: a single fill only 15 min late loses 20-40% of the edge. Building the position in equal slices
+(TWAP) costs much less, and after the first 15 min the quiet-regime edge is flat (0.19-0.22 c/bu for 15-90 min).
+
+| Entry | Net c/bu 2021-22 / 2023-24 | Lots at 5% of meal volume (median) | Lots at 10% |
+|---|---|---|---|
+| Immediate (one 5-min bar) | 1.36 / 0.29 | 1.5 | 3 |
+| TWAP 30 min | 1.17 / 0.20 | 11 | 21 |
+| **TWAP 60 min** | **1.02 / 0.22** | **22** | **44** |
+| TWAP 90 min | 0.95 / 0.19 | 34 | 68 |
+
+Lots are **bean contracts**, each hedged with ~1 ZM and ~0.7 ZL; meal is the leg that runs out of volume first.
+Front-month volume only: the listed CME crush spread's own book and deferred meal months are not counted.
+
+**Lighter meal hedge** (same trades, only the meal leg scaled): 100% Sharpe 2.90, 75% 2.54, 50% 1.94. The edge
+per trade barely falls (0.87 -> 0.79 -> 0.71 c/bu) but the unhedged meal is an outright bet the signal knows
+nothing about. 75% is a reasonable fallback; better first: front + next-month meal, and the listed crush spread.
+
+**P&L scenarios** (estimates built on the backtest, not backtest results). 1 c/bu per bean contract = $50.
+Assumptions: passive / spread execution saves ~1 of the 2.3 crossing ticks (+0.25 c/bu); capacity doubled by
+the listed crush spread and two meal months (unverified); fees ~$4 per spread round trip per bean contract.
+
+| Scenario | Lots | Net c/bu per trade (quiet / strong) | Quiet year (~70 trades) | Strong year (~74 trades) |
+|---|---|---|---|---|
+| Model as backtested, TWAP 60 min | 44 | 0.22 / 1.02 | ~$22k | ~$155k |
+| + passive execution | 44 | 0.47 / 1.27 | ~$60k | ~$195k |
+| + doubled capacity (crush spread + 2 months) | 88 | 0.47 / 1.27 | **~$120k** | **~$390k** |
+| + 75% meal hedge | ~110 | ~0.45 / 1.2 | ~$150k | ~$460k |
+
+$250-500k a year comes in high-volatility regimes (2021-22 type); quiet regimes give ~$100-150k even with every
+lever working. The edge scales with volatility.
+
+**Risk use is the strong point.** At ~88 lots (~$4.8M bean notional, ~$55k per contract): annual volatility
+~$80-90k (1.6-1.9% of notional), **1-day 95% VaR ~$8-10k**, worst drawdown seen ~$55-70k. That is ~1% of a
+$1M VaR budget for $120-390k a year: very efficient P&L per unit of risk, capped by liquidity rather than risk.
+A background-book component, not a core strategy.
+
+**To confirm before relying on these numbers:** (1) overnight volume and depth of the listed crush spread
+(broker / CME); (2) a small live run with transaction-cost analysis (fill rate, slippage vs mid, missed trades);
+(3) the clean 2026 out-of-sample test. Fees, impact at 10% participation and the capacity doubling are assumptions.
 
 ## What the research found (development only: chosen on 2021-22, confirmed on 2023 - Nov 2024)
 
