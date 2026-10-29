@@ -11,30 +11,11 @@ split:
 strategy:
   threshold: 1.5                   # entry |z|
   profit_sigma: 1.0
-  stop_sigma: 4.0                  # disaster stop: tighter stops cut reverting trades (runs/20261029-083953_exit_study)
+  stop_sigma: 4.0                  # disaster stop: tighter stops cut reverting trades
   holding_hours: 12
-  time_stop: session               # never carry past the entry session's close (exit_study: carrying adds variance, not edge)
-  min_hours_left: 3.0              # no entries in the last 3 h of a session (runs/20261029-085739_feature_screen; chosen on 2021-22)
+  min_hours_left: 3.0              # no entries in the last 3 h of a session (chosen on 2021-22, plateau 3-8 h)
   bar_minutes: 5                   # not tunable here: bars are built once per run
   cost_ticks: 1.0                  # per leg, round trip. A stress, not a tuning knob: keep it out of the grid
-
-# Hedge filter (kalman_filter.py). hand_set = the original settings, adopted as baseline:
-# with session exits it beat mle in every pipeline (runs/20261029-0841..0842_validation).
-# The mle values are kept for re-estimating the filter at other bar sizes:
-# noise structure from runs/20261029-074600_kalman_calibration (fitted on development only);
-# speed from runs/20261029-080200_kalman_speed_sweep (chosen on 2021-22, confirmed on 2023 - Nov 2024).
-kalman:
-  method: hand_set                 # hand_set | mle (the fields below are used by mle only)
-  speed: 0.003
-  q_alpha: 5.178e-08
-  q_meal: 1.047e-07
-  q_oil: 8.462e-08
-  r_evening: 1.561e-08
-  r_day: 1.119e-07
-  open_mult: 43.81
-
-signal:
-  z_method: roll20                 # roll20 | pct20 (runs/20261029-081618_kalman_zscore; not better at trade level)
 
 validation:
   n_folds: 6

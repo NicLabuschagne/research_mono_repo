@@ -1,0 +1,62 @@
+{
+  "kind": "holdout",
+  "git": {
+    "commit": "29c1cfd",
+    "dirty": true
+  },
+  "config_hash": "8952909686",
+  "selected_params": {
+    "threshold": 1.5,
+    "profit_sigma": 1.0,
+    "stop_sigma": 4.0,
+    "holding_hours": 12,
+    "min_hours_left": 3.0
+  },
+  "validation_run": "20261029-112032_validation",
+  "development": {
+    "sharpe": 2.897352601107629,
+    "total_return": 18.339834925667354,
+    "max_drawdown": -1.1173090271269608,
+    "trades": 292
+  },
+  "holdout": {
+    "sharpe": 1.324971787625389,
+    "total_return": 2.5827590265760625,
+    "max_drawdown": -1.3642016391857354,
+    "trades": 57
+  },
+  "forced": false,
+  "tearsheet": {
+    "start": "2024-12-02",
+    "end": "2025-12-16",
+    "periods": 262,
+    "total_return": 2.5827590265760625,
+    "annual_return": 2.4841804377754495,
+    "annual_volatility": 1.874893081480317,
+    "sharpe": 1.324971787625389,
+    "sortino": 1.963762589436189,
+    "max_drawdown": -1.3642016391857354,
+    "calmar": 1.820977461409742,
+    "longest_drawdown_periods": 150,
+    "pct_months_positive": 69.23076923076923,
+    "best_month": 0.9070119747121917,
+    "worst_month": -0.8387519077883535,
+    "trades": 57,
+    "trades_per_month": 4.384615384615385,
+    "win_rate": 66.66666666666666,
+    "avg_win": 0.18322955332705232,
+    "avg_loss": -0.2305244210448382,
+    "payoff_ratio": 0.7948379286523106,
+    "expectancy": 0.045311561869755476,
+    "profit_factor": 1.5896758573046212,
+    "best_trade": 0.41036275888959456,
+    "worst_trade": -0.6780351914499393,
+    "max_consecutive_losses": 3,
+    "expectancy_c_per_bu": 0.474096857124034,
+    "total_c_per_bu": 27.023520856069936,
+    "median_holding_minutes": 370.0,
+    "exit_profit_pct": 49.122807017543856,
+    "exit_time_pct": 49.122807017543856,
+    "exit_stop_pct": 1.7543859649122806
+  }
+}

@@ -56,5 +56,5 @@ python -m strategies.my_idea.holdout                    # once, after the gates 
 
 | Strategy | Idea | Status |
 |---|---|---|
-| [`crush_strategy`](strategies/crush_strategy/output/README.md) | Overnight reversion of the soybean crush residual (ZS vs ZM/ZL), Kalman hedge | Recalibrated Oct 2026 (session-close exit): passes all 4 gates on development (Sharpe 2.25, walk-forward OOS 1.10); holdout already seen, needs post-2025 data |
+| [`crush_strategy`](strategies/crush_strategy/output/README.md) | Overnight reversion of the soybean crush residual (ZS vs ZM/ZL), Kalman hedge | Recalibrated Oct 2026 (session-close exit, 3 h entry cutoff): passes all 4 gates (dev Sharpe 2.90, walk-forward OOS 2.53); holdout Sharpe 1.33 is a contaminated check (period seen before); needs post-2025 data |
 | [`wheat_microstructure`](strategies/wheat_microstructure/README.md) | Order flow in ZW tick data | In progress: data checks |

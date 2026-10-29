@@ -25,25 +25,20 @@ def signals_at(positions) -> pd.DataFrame:
 
 def test_session_time_stop_never_leaves_the_session():
     bars = flat_bars()
-    trades = simulate_trades(bars, signals_at([10, 50]), StrategyConfig(time_stop="session", holding_hours=12))
+    trades = simulate_trades(bars, signals_at([10, 50]), StrategyConfig(holding_hours=12, min_hours_left=0.0))
     session = bars["session_id"].values
     assert (session[trades["exit_bar"]] == session[trades["entry_bar"]]).all()
     assert list(trades["exit_bar"]) == [39, 79]                    # last bar of each session
 
 
 def test_session_time_stop_respects_the_clock_cap():
-    trades = simulate_trades(flat_bars(), signals_at([10]), StrategyConfig(time_stop="session", holding_hours=1))
+    trades = simulate_trades(flat_bars(), signals_at([10]), StrategyConfig(holding_hours=1, min_hours_left=0.0))
     assert trades["exit_bar"].iloc[0] == 11 + 12                   # entry bar + 60 minutes of 5-minute bars
-
-
-def test_bar_time_stop_still_counts_bars_across_sessions():
-    trades = simulate_trades(flat_bars(), signals_at([10]), StrategyConfig(time_stop="bars", holding_hours=4))
-    assert trades["exit_bar"].iloc[0] == 11 + 48                   # crosses into the next session, as before
 
 
 def test_min_hours_left_skips_late_signals():
     bars = flat_bars()                                             # sessions of 40 bars = 3h15 from first to last bar
     late, early = 35, 50                                           # 20 min vs 3h05 before their session's last bar
     trades = simulate_trades(bars, signals_at([late, early]),
-                             StrategyConfig(time_stop="session", holding_hours=12, min_hours_left=1.0))
+                             StrategyConfig(holding_hours=12, min_hours_left=1.0))
     assert list(trades["entry_bar"]) == [early + 1]

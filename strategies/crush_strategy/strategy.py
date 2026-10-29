@@ -6,24 +6,22 @@ Overnight crush-residual reversion with triple-barrier exits (final specificatio
 Signal : evening session, Kalman residual z-score (features.py) crosses |z| >= threshold.
 Trade rules
   Entry  : next bar's open after the signal bar closes; hedge (betas) frozen at the signal bar.
+           No entries with less than min_hours_left (3 h) to the session close: with the
+           session exit they get too little time to revert (the strongest trade-level feature).
   Exits  : first barrier touched, checked on bar closes
              profit : favourable move >= 1 sigma   (about half the gap to the mean;
                       part of every dislocation is permanent, so waiting for the full
                       mean often fails)
-             stop   : adverse move     >= 3 sigma
-             time   : 12 hours
+             stop   : adverse move     >= 4 sigma  (a disaster stop: tighter stops exit at the
+                      largest dislocation, exactly when reversion is most likely)
+             time   : the close of the entry session (evening: 07:45 CT), capped at 12 h.
+                      Never carried into the day session or the next evening: ~60% of trades
+                      used to carry, and those lost money on average.
            sigma = residual std at the signal (z_std), so barriers scale with the regime.
-           time_stop (config):
-             bars    : the original. holding_hours x 12 five-minute BARS, which can run through
-                       the 07:45 break, the day session and the next evening's open
-             session : holding_hours of CLOCK time, and never past the close of the session the
-                       trade entered in (evening: 07:45 CT). No carry, no day-session exposure.
-  Entry filter: min_hours_left skips signals too close to the session close; with the session
-           exit they get too little time to revert (feature_screen.py: the strongest feature).
   Sizing : 1 bushel of beans against beta-weighted meal and oil. The residual change is
            a log return on the beans notional; x bean price gives cents per bushel.
   Costs  : 1 tick per leg, round trip (= 0.58 c/bu on the spread).
-  One trade at a time, every signal taken (no filter / meta-model).
+  One trade at a time; every signal that passes the entry cutoff is taken (no meta-model).
 
 Reporting: returns as % of bean notional (independent of contract count), USD per 5,000 bu.
 All params live in config.yaml; validate.py tunes them, holdout.py tests them once.
@@ -36,7 +34,7 @@ import pandas as pd
 
 from core_quant.config import ROOT, GateConfig, SplitConfig, ValidationConfig, load_config
 from strategies.crush_strategy.data_ingest import build_bars
-from strategies.crush_strategy.kalman_filter import KalmanConfig, add_kalman_residual
+from strategies.crush_strategy.kalman_filter import add_kalman_residual
 from strategies.crush_strategy.features import add_session_zscore, detect_signals
 
 TICK_COST_CENTS = 0.58          # ZS 0.25 + ZM 0.22 + ZL 0.11 c/bu, one tick each, round trip
@@ -48,17 +46,11 @@ STRATEGY_DIR = Path(__file__).parent
 class StrategyConfig:
     threshold: float = 1.5      # entry |z|
     profit_sigma: float = 1.0
-    stop_sigma: float = 3.0
-    holding_hours: float = 12
+    stop_sigma: float = 4.0
+    holding_hours: float = 12    # clock-time cap; the session close usually comes first
     bar_minutes: int = 5
     cost_ticks: float = 1.0      # per leg, round trip
-    time_stop: str = "bars"      # bars | session (see module docstring)
-    min_hours_left: float = 0.0  # skip signals with less time than this to the session close (feature_screen.py)
-
-
-@dataclass(frozen=True)
-class SignalConfig:
-    z_method: str = "roll20"     # roll20 | pct20 (features.py)
+    min_hours_left: float = 3.0  # skip signals with less time than this to the session close
 
 
 @dataclass(frozen=True)
@@ -68,9 +60,6 @@ class CrushConfig:
     strategy: StrategyConfig
     validation: ValidationConfig
     gates: GateConfig
-    # defaults = the original pipeline, so configs saved before these sections still load as they ran
-    kalman: KalmanConfig = KalmanConfig()
-    signal: SignalConfig = SignalConfig()
 
 
 def load(path: Path = STRATEGY_DIR / "config.yaml") -> CrushConfig:
@@ -79,9 +68,6 @@ def load(path: Path = STRATEGY_DIR / "config.yaml") -> CrushConfig:
 
 def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyConfig) -> pd.DataFrame:
     """Walk each signal forward with the hedge frozen at the signal bar."""
-    if config.time_stop not in ("bars", "session"):
-        raise ValueError(f"unknown time_stop {config.time_stop!r}")
-    time_bars = int(config.holding_hours * 60 // config.bar_minutes)
     log_open = {leg: np.log(bars[f"{leg}_adj_open"].values) for leg in ["ZS", "ZM", "ZL"]}
     log_close = {leg: np.log(bars[f"{leg}_adj_close"].values) for leg in ["ZS", "ZM", "ZL"]}
     session = bars["session_id"].values
@@ -99,13 +85,9 @@ def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyC
         hours_left = (bar_time[session_last_bar[signal_bar]] - bar_time[signal_bar]) / np.timedelta64(1, "h")
         if hours_left < config.min_hours_left:
             continue                                       # too late in the session to revert
-        if config.time_stop == "bars":
-            last_bar = entry_bar + time_bars
-            if last_bar >= len(bars):
-                continue                                   # not enough data
-        else:                                              # clock-time cap, never past the session close
-            cap = bar_time[entry_bar] + np.timedelta64(int(config.holding_hours * 60), "m")
-            last_bar = min(int(np.searchsorted(bar_time, cap, side="right")) - 1, session_last_bar[entry_bar])
+        # clock-time cap, never past the session close
+        cap = bar_time[entry_bar] + np.timedelta64(int(config.holding_hours * 60), "m")
+        last_bar = min(int(np.searchsorted(bar_time, cap, side="right")) - 1, session_last_bar[entry_bar])
 
         alpha = bars["frozen_alpha"].values[signal_bar]
         beta_meal = bars["frozen_beta_meal"].values[signal_bar]
@@ -183,8 +165,8 @@ def performance(trades: pd.DataFrame, trading_dates: pd.DatetimeIndex, cost_tick
 def prepare_bars(cfg: CrushConfig) -> pd.DataFrame:
     """Ingest -> Kalman residual -> z-score. Param-free, so it runs once per validation."""
     bars = build_bars(ROOT / cfg.data_path, cfg.strategy.bar_minutes)
-    bars = add_kalman_residual(bars, cfg.strategy.bar_minutes, cfg.kalman)
-    return add_session_zscore(bars, method=cfg.signal.z_method)
+    bars = add_kalman_residual(bars, cfg.strategy.bar_minutes)
+    return add_session_zscore(bars)
 
 
 def make_evaluator(cfg: CrushConfig):
