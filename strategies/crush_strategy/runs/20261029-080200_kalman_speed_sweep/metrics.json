@@ -1,0 +1,19 @@
+{
+  "kind": "kalman_speed_sweep",
+  "git": {
+    "commit": "c0bbb21",
+    "dirty": true
+  },
+  "params_from": "20261029-074600_kalman_calibration",
+  "speeds": [
+    0.0001,
+    0.0003,
+    0.001,
+    0.003,
+    0.01,
+    0.03,
+    0.1,
+    0.3,
+    1.0
+  ]
+}

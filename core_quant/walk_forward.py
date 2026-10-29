@@ -19,6 +19,8 @@ A strategy plugs in with one function:
         indexed by date (or bar time), columns:
           ret    : return for that period (additive, e.g. % of a fixed notional)
           trades : number of trades closed that period
+        optionally daily.attrs["trades"] = one row per trade (see tearsheet.py), which adds
+        win rate, expectancy, profit factor etc. to the tear sheet saved with every run
 
 The strategy config must have `strategy`, `split`, `validation` and `gates` sections,
 and every grid name must be a field of `strategy`.
@@ -38,7 +40,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from core_quant import plots
+from core_quant import plots, tearsheet
 from core_quant.config import latest_run, save_run
 
 Evaluate = Callable[[dict, pd.Timestamp, pd.Timestamp], pd.DataFrame]
@@ -173,7 +175,9 @@ def walk_forward_selection(results: pd.DataFrame, daily_by_combo: dict[int, pd.D
 
         daily = daily_by_combo[best_combo]
         fold_of_date = assign_folds(daily.index, fold_starts)
-        oos_pieces.append(daily[fold_of_date == fold_number])
+        piece = daily[fold_of_date == fold_number].copy()
+        piece.attrs = {}                     # per-trade tables in attrs cannot be compared by pd.concat
+        oos_pieces.append(piece)
 
     return pd.DataFrame(picks), pd.concat(oos_pieces)
 
@@ -246,6 +250,13 @@ def run_validation(cfg, evaluate: Evaluate, trading_dates: pd.DatetimeIndex, str
         {"selected params": daily_by_combo[selected_combo]["ret"],
          "walk-forward selection (OOS)": oos_daily["ret"]},
         title=f"Development, {len(folds)} folds", boundaries=fold_starts)
+    selected_daily = daily_by_combo[selected_combo]
+    sheet = tearsheet.tear_sheet(selected_daily, tearsheet.trades_of(selected_daily), periods_per_year)
+    oos_sheet = tearsheet.tear_sheet(oos_daily, None, periods_per_year)        # mixes combos: returns only
+    figures["tearsheet"] = tearsheet.plot_tear_sheet(
+        selected_daily, tearsheet.trades_of(selected_daily), sheet, title=f"Development {selected}")
+    figures["tearsheet_walk_forward_oos"] = tearsheet.plot_tear_sheet(
+        oos_daily, None, oos_sheet, title="Walk-forward selection (OOS)")
 
     # save everything as one run
     stability_columns = ["mean_sharpe", "std_sharpe", "min_sharpe", "pct_folds_positive"]
@@ -259,8 +270,11 @@ def run_validation(cfg, evaluate: Evaluate, trading_dates: pd.DatetimeIndex, str
         "walk_forward_oos": walk_forward,
         "gates": gates.to_dict("records"),
         "gates_passed": gates_passed,
+        "tearsheet": sheet,
+        "tearsheet_walk_forward_oos": oos_sheet,
     }
-    tables = {"grid_results": results, "grid_summary": summary, "walk_forward_picks": picks, "gates": gates}
+    tables = {"grid_results": results, "grid_summary": summary, "walk_forward_picks": picks, "gates": gates,
+              "monthly_returns": tearsheet.monthly_returns(selected_daily)}
     run_dir = save_run(strategy_dir, "validation", cfg, metrics, tables=tables, figures=figures)
 
     print(f"{len(combos)} combos x {len(folds)} folds. Top 10 by mean fold Sharpe:")
@@ -303,9 +317,12 @@ def run_holdout(cfg, evaluate: Evaluate, strategy_dir: Path, force: bool = False
     holdout = score(daily, cfg.validation.periods_per_year)
 
     figure = plots.plot_cumulative({"holdout": daily["ret"]}, title=f"Holdout {params}")
+    sheet = tearsheet.tear_sheet(daily, tearsheet.trades_of(daily), cfg.validation.periods_per_year)
+    sheet_figure = tearsheet.plot_tear_sheet(daily, tearsheet.trades_of(daily), sheet, title=f"Holdout {params}")
     metrics = {"config_hash": config_hash(cfg), "selected_params": params, "validation_run": run_dir.name,
-               "development": validation["development"], "holdout": holdout, "forced": force}
-    saved = save_run(strategy_dir, "holdout", cfg, metrics, figures={"equity": figure})
+               "development": validation["development"], "holdout": holdout, "forced": force, "tearsheet": sheet}
+    saved = save_run(strategy_dir, "holdout", cfg, metrics, tables={"monthly_returns": tearsheet.monthly_returns(daily)},
+                     figures={"equity": figure, "tearsheet": sheet_figure})
 
     print(pd.DataFrame({"development": validation["development"], "holdout": holdout}).round(3))
     print(f"Saved {saved}")

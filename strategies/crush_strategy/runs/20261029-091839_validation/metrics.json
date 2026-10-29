@@ -1,0 +1,87 @@
+{
+  "kind": "validation",
+  "git": {
+    "commit": "c0bbb21",
+    "dirty": true
+  },
+  "config_hash": "3165e83bbb",
+  "selected_params": {
+    "threshold": 1.5,
+    "profit_sigma": 1.0,
+    "stop_sigma": 4.0,
+    "holding_hours": 12,
+    "min_hours_left": 3.0
+  },
+  "n_combos_tried": 540,
+  "folds": [
+    [
+      "2021-01-04",
+      "2021-08-26"
+    ],
+    [
+      "2021-08-27",
+      "2022-04-21"
+    ],
+    [
+      "2022-04-22",
+      "2022-12-14"
+    ],
+    [
+      "2022-12-15",
+      "2023-08-11"
+    ],
+    [
+      "2023-08-14",
+      "2024-04-08"
+    ],
+    [
+      "2024-04-09",
+      "2024-11-29"
+    ]
+  ],
+  "development": {
+    "sharpe": 2.0328738062835034,
+    "total_return": 10.63495982274913,
+    "max_drawdown": -1.2074929172763316,
+    "trades": 178
+  },
+  "selected_across_folds": {
+    "mean_sharpe": 1.8208880460806587,
+    "std_sharpe": 1.4772000978878008,
+    "min_sharpe": -0.38469708638211575,
+    "pct_folds_positive": 0.8333333333333334
+  },
+  "walk_forward_oos": {
+    "sharpe": 1.007214448326322,
+    "total_return": 3.366055461925652,
+    "max_drawdown": -0.7844323252901888,
+    "trades": 86
+  },
+  "gates": [
+    {
+      "gate": "mean fold Sharpe",
+      "value": 1.8208880460806587,
+      "minimum": 1.0,
+      "passed": true
+    },
+    {
+      "gate": "share of folds positive",
+      "value": 0.8333333333333334,
+      "minimum": 0.67,
+      "passed": true
+    },
+    {
+      "gate": "development trades",
+      "value": 178.0,
+      "minimum": 150.0,
+      "passed": true
+    },
+    {
+      "gate": "walk-forward OOS Sharpe",
+      "value": 1.007214448326322,
+      "minimum": 0.5,
+      "passed": true
+    }
+  ],
+  "gates_passed": true
+}

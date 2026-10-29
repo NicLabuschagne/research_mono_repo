@@ -27,6 +27,7 @@ core_quant/              strategy-agnostic engine, written once
   feature_registry.py    reusable features and signals
   model_registry/        sklearn models by name, leak-free walk-forward predictions
   plots.py, theme.py     tuning heatmaps, parameter curves, fold Sharpe, equity
+  tearsheet.py           standard tear sheet saved with every validation / holdout run (tearsheet.png + metrics)
 strategies/<name>/       one folder per idea
   README.md              hypothesis, data notes, run log
   config.yaml            every parameter, split, grid and gate
@@ -38,7 +39,7 @@ strategies/_template/    copy this to start a new strategy
 data/{raw,processed}     market data (not in git)
 ```
 
-A strategy only supplies **`evaluate(params, start, end)`**, which returns per-period returns and trade counts. Everything else is shared.
+A strategy only supplies **`evaluate(params, start, end)`**, which returns per-period returns and trade counts. Everything else is shared. If it also sets `daily.attrs["trades"]` (one row per trade: `ret`, `exit_date`, optionally `pnl`, `holding_minutes`, `exit_reason`), the tear sheet adds win rate, expectancy, profit factor and losing streaks.
 
 ## Quickstart
 
@@ -55,5 +56,5 @@ python -m strategies.my_idea.holdout                    # once, after the gates 
 
 | Strategy | Idea | Status |
 |---|---|---|
-| [`crush_strategy`](strategies/crush_strategy/output/README.md) | Overnight reversion of the soybean crush residual (ZS vs ZM/ZL), Kalman hedge | Validation: passes 3 of 4 gates, fails the walk-forward out-of-sample Sharpe (0.24 vs 0.5) |
+| [`crush_strategy`](strategies/crush_strategy/output/README.md) | Overnight reversion of the soybean crush residual (ZS vs ZM/ZL), Kalman hedge | Recalibrated Oct 2026 (session-close exit): passes all 4 gates on development (Sharpe 2.25, walk-forward OOS 1.10); holdout already seen, needs post-2025 data |
 | [`wheat_microstructure`](strategies/wheat_microstructure/README.md) | Order flow in ZW tick data | In progress: data checks |

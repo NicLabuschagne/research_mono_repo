@@ -1,0 +1,20 @@
+{
+  "kind": "feature_screen",
+  "git": {
+    "commit": "c0bbb21",
+    "dirty": true
+  },
+  "n_trades": 412,
+  "survivors": [
+    "pre_us_hours",
+    "hour_cos",
+    "hours_left",
+    "max_abs_leg_abnormal_move",
+    "hour_sin",
+    "sigma_cents",
+    "cost_over_sigma",
+    "season_sin",
+    "z_growth_1h",
+    "thinnest_leg_volume"
+  ]
+}

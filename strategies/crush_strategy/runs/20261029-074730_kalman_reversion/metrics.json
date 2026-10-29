@@ -1,0 +1,8 @@
+{
+  "kind": "kalman_reversion",
+  "git": {
+    "commit": "c0bbb21",
+    "dirty": true
+  },
+  "params_from": "20261029-074600_kalman_calibration"
+}

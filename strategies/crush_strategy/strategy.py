@@ -13,6 +13,13 @@ Trade rules
              stop   : adverse move     >= 3 sigma
              time   : 12 hours
            sigma = residual std at the signal (z_std), so barriers scale with the regime.
+           time_stop (config):
+             bars    : the original. holding_hours x 12 five-minute BARS, which can run through
+                       the 07:45 break, the day session and the next evening's open
+             session : holding_hours of CLOCK time, and never past the close of the session the
+                       trade entered in (evening: 07:45 CT). No carry, no day-session exposure.
+  Entry filter: min_hours_left skips signals too close to the session close; with the session
+           exit they get too little time to revert (feature_screen.py: the strongest feature).
   Sizing : 1 bushel of beans against beta-weighted meal and oil. The residual change is
            a log return on the beans notional; x bean price gives cents per bushel.
   Costs  : 1 tick per leg, round trip (= 0.58 c/bu on the spread).
@@ -29,7 +36,7 @@ import pandas as pd
 
 from core_quant.config import ROOT, GateConfig, SplitConfig, ValidationConfig, load_config
 from strategies.crush_strategy.data_ingest import build_bars
-from strategies.crush_strategy.kalman_filter import add_kalman_residual
+from strategies.crush_strategy.kalman_filter import KalmanConfig, add_kalman_residual
 from strategies.crush_strategy.features import add_session_zscore, detect_signals
 
 TICK_COST_CENTS = 0.58          # ZS 0.25 + ZM 0.22 + ZL 0.11 c/bu, one tick each, round trip
@@ -42,9 +49,16 @@ class StrategyConfig:
     threshold: float = 1.5      # entry |z|
     profit_sigma: float = 1.0
     stop_sigma: float = 3.0
-    holding_hours: int = 12
+    holding_hours: float = 12
     bar_minutes: int = 5
     cost_ticks: float = 1.0      # per leg, round trip
+    time_stop: str = "bars"      # bars | session (see module docstring)
+    min_hours_left: float = 0.0  # skip signals with less time than this to the session close (feature_screen.py)
+
+
+@dataclass(frozen=True)
+class SignalConfig:
+    z_method: str = "roll20"     # roll20 | pct20 (features.py)
 
 
 @dataclass(frozen=True)
@@ -54,6 +68,9 @@ class CrushConfig:
     strategy: StrategyConfig
     validation: ValidationConfig
     gates: GateConfig
+    # defaults = the original pipeline, so configs saved before these sections still load as they ran
+    kalman: KalmanConfig = KalmanConfig()
+    signal: SignalConfig = SignalConfig()
 
 
 def load(path: Path = STRATEGY_DIR / "config.yaml") -> CrushConfig:
@@ -62,18 +79,33 @@ def load(path: Path = STRATEGY_DIR / "config.yaml") -> CrushConfig:
 
 def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyConfig) -> pd.DataFrame:
     """Walk each signal forward with the hedge frozen at the signal bar."""
-    time_bars = config.holding_hours * 60 // config.bar_minutes
+    if config.time_stop not in ("bars", "session"):
+        raise ValueError(f"unknown time_stop {config.time_stop!r}")
+    time_bars = int(config.holding_hours * 60 // config.bar_minutes)
     log_open = {leg: np.log(bars[f"{leg}_adj_open"].values) for leg in ["ZS", "ZM", "ZL"]}
     log_close = {leg: np.log(bars[f"{leg}_adj_close"].values) for leg in ["ZS", "ZM", "ZL"]}
     session = bars["session_id"].values
+    bar_time = bars.index.values
+    session_last_bar = pd.Series(np.arange(len(bars))).groupby(session).transform("max").values
 
     trades, next_free_bar = [], -1
     for signal in signals.itertuples():
         signal_bar, entry_bar = signal.signal_position, signal.signal_position + 1
         if entry_bar <= next_free_bar:                     # still in the previous trade
             continue
-        if entry_bar + time_bars >= len(bars) or session[entry_bar] != session[signal_bar]:
-            continue                                       # no fill in the same session / not enough data
+        if entry_bar >= len(bars) or session[entry_bar] != session[signal_bar]:
+            continue                                       # no fill in the same session
+        # session close from the data: matches the exchange schedule, incl. known early closes
+        hours_left = (bar_time[session_last_bar[signal_bar]] - bar_time[signal_bar]) / np.timedelta64(1, "h")
+        if hours_left < config.min_hours_left:
+            continue                                       # too late in the session to revert
+        if config.time_stop == "bars":
+            last_bar = entry_bar + time_bars
+            if last_bar >= len(bars):
+                continue                                   # not enough data
+        else:                                              # clock-time cap, never past the session close
+            cap = bar_time[entry_bar] + np.timedelta64(int(config.holding_hours * 60), "m")
+            last_bar = min(int(np.searchsorted(bar_time, cap, side="right")) - 1, session_last_bar[entry_bar])
 
         alpha = bars["frozen_alpha"].values[signal_bar]
         beta_meal = bars["frozen_beta_meal"].values[signal_bar]
@@ -83,7 +115,7 @@ def simulate_trades(bars: pd.DataFrame, signals: pd.DataFrame, config: StrategyC
             return prices["ZS"][index] - (alpha + beta_meal * prices["ZM"][index] + beta_oil * prices["ZL"][index])
 
         entry_residual = hedged_residual(log_open, entry_bar)
-        path = np.arange(entry_bar, entry_bar + time_bars + 1)
+        path = np.arange(entry_bar, last_bar + 1)
         favourable = signal.direction * (hedged_residual(log_close, path) - entry_residual)
 
         sigma = bars["z_std"].values[signal_bar]
@@ -123,6 +155,16 @@ def daily_returns(trades: pd.DataFrame, trading_dates: pd.DatetimeIndex, cost_ti
                          "trades": exit_dates.value_counts().reindex(all_days, fill_value=0)})
 
 
+def trade_table(trades: pd.DataFrame, cost_ticks: float) -> pd.DataFrame:
+    """Per-trade rows in the tear sheet's format: ret in % of bean notional, pnl in c/bu after costs."""
+    net_cents = trades["gross_cents"] - cost_ticks * TICK_COST_CENTS
+    table = pd.DataFrame({"exit_date": pd.to_datetime(trades["exit_date"]),
+                          "ret": net_cents / trades["bean_price_cents"] * 100, "pnl": net_cents,
+                          "holding_minutes": trades["holding_minutes"], "exit_reason": trades["exit_reason"]})
+    table.attrs["pnl_unit"] = "c_per_bu"
+    return table.reset_index(drop=True)
+
+
 def performance(trades: pd.DataFrame, trading_dates: pd.DatetimeIndex, cost_ticks: float) -> tuple[dict, pd.Series]:
     """Net results after costs; daily series over every trading day (zero when flat) for Sharpe and drawdown."""
     net_cents = trades["gross_cents"] - cost_ticks * TICK_COST_CENTS
@@ -141,8 +183,8 @@ def performance(trades: pd.DataFrame, trading_dates: pd.DatetimeIndex, cost_tick
 def prepare_bars(cfg: CrushConfig) -> pd.DataFrame:
     """Ingest -> Kalman residual -> z-score. Param-free, so it runs once per validation."""
     bars = build_bars(ROOT / cfg.data_path, cfg.strategy.bar_minutes)
-    bars = add_kalman_residual(bars, cfg.strategy.bar_minutes)
-    return add_session_zscore(bars)
+    bars = add_kalman_residual(bars, cfg.strategy.bar_minutes, cfg.kalman)
+    return add_session_zscore(bars, method=cfg.signal.z_method)
 
 
 def make_evaluator(cfg: CrushConfig):
@@ -168,7 +210,9 @@ def make_evaluator(cfg: CrushConfig):
         signal_dates = pd.to_datetime(trades["signal_date"])
         trades = trades[(signal_dates >= start) & (signal_dates < end)]
         dates = trading_dates[(trading_dates >= start) & (trading_dates < end)]
-        return daily_returns(trades, dates, config.cost_ticks)
+        daily = daily_returns(trades, dates, config.cost_ticks)
+        daily.attrs["trades"] = trade_table(trades, config.cost_ticks)      # for the tear sheet
+        return daily
 
     return evaluate, trading_dates
 
