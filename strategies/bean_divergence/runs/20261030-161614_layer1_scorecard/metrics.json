@@ -1,0 +1,12 @@
+{
+  "kind": "layer1_scorecard",
+  "git": {
+    "commit": "2dff5bc",
+    "dirty": true
+  },
+  "hedges": [
+    "session",
+    "daily",
+    "live"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "kind": "layer1_extremes",
+  "git": {
+    "commit": "2dff5bc",
+    "dirty": true
+  },
+  "levels": [
+    "90th",
+    "95th",
+    "99th"
+  ],
+  "window_days": 20
+}

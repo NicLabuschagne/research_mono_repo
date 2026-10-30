@@ -1,0 +1,20 @@
+data_path: data/raw/latest_df_backup.parquet
+split:
+  development_start: 2021-01-01
+  holdout_start: 2024-12-01
+  holdout_end: null
+research:
+  bar_minutes: 5
+  lookbacks_bars:
+  - 6
+  - 12
+  - 24
+  horizons_bars:
+  - 3
+  - 6
+  - 12
+  - 24
+  - 48
+  z_window_days: 20
+  event_z: 1.0
+  cost_ticks: 1.0

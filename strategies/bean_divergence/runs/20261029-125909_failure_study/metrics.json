@@ -1,0 +1,8 @@
+{
+  "kind": "failure_study",
+  "git": {
+    "commit": "2dff5bc",
+    "dirty": true
+  },
+  "trades": 844
+}

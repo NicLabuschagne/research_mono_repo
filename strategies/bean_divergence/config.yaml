@@ -1,0 +1,15 @@
+# Bean divergence (outright ZS from relative strength vs products). See README for the hypothesis.
+data_path: data/raw/latest_df_backup.parquet     # same 1-minute ZS/ZM/ZL file as the crush strategy
+
+split:
+  development_start: 2021-01-01
+  holdout_start: 2024-12-01        # locked before any result was looked at
+  holdout_end: null
+
+research:
+  bar_minutes: 5
+  lookbacks_bars: [6, 12, 24]      # 30 min, 1 h, 2 h (plus "since session open")
+  horizons_bars: [3, 6, 12, 24, 48]  # 15 min to 4 h, never past the session close
+  z_window_days: 20                # feature scaling: previous days only
+  event_z: 1.0                     # |z| both features must reach for the event study
+  cost_ticks: 1.0                  # ZS round trip
