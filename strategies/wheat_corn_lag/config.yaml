@@ -14,7 +14,7 @@ roll_business_days_after_fnd: 3
 split:
   development_start: 2020-01-23 00:00:00
   holdout_start: 2026-01-01 00:00:00         # locked 2026-10-30; untouched until validation passes every gate
-  holdout_end: null
+  holdout_end: 2026-07-01 00:00:00           # holdout A = Jan-Jun 2026 (run once 2026-11-02); Jul-Oct 2026 = holdout B, locked
 
 # Step 4. Lookbacks and horizons in 15-minute bars (4 = 1 hour, 71 = about one session).
 features:

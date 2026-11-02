@@ -4,6 +4,7 @@ kalman_rule.py
 The adopted base rule (2026-11-02) and its walk-forward. Params: kalman_rule in config.yaml, grid: kalman_grid.
 
     python -m strategies.wheat_corn_lag.kalman_rule      # walk-forward on the development period, gates, cents report
+    python -m strategies.wheat_corn_lag.kalman_rule --holdout   # holdout A, ONCE, after a passing walk-forward
 
 Signal    s = -kzr_{M}s: the Kalman level gap (wheat vs alpha + beta x corn, live) / its 20-session RMS around zero.
           + = wheat cheap vs corn -> buy wheat. Layer 1: IC 0.13 at 1 session, deciles in order.
@@ -24,6 +25,7 @@ P&L       log return of wheat notional, marked to market bar by bar, summed per 
           the unit the walk-forward scores. Next to it, in CENTS: net per trade (all trades, after costs) and
           average winner / average loser (the size of the winning / losing trades only).
 """
+import sys
 from dataclasses import replace
 
 import matplotlib
@@ -32,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from core_quant.walk_forward import run_validation, score
+from core_quant.walk_forward import run_holdout, run_validation, score
 from strategies.wheat_corn_lag.backtest import TICK_CENTS, session_returns
 from strategies.wheat_corn_lag.edge_map import tail_table
 from strategies.wheat_corn_lag.features import build_features
@@ -207,9 +209,10 @@ def book(bars: pd.DataFrame, s: pd.Series, rule: KalmanRuleConfig, gap: pd.Serie
     return trades
 
 
-def make_kalman_evaluator(cfg, include_holdout: bool = False):
-    """Load and build features once; return evaluate(params, start, end), every trading date, bars and features."""
-    bars = load_bars(cfg, include_holdout=include_holdout)
+def make_kalman_evaluator(cfg, include_holdout: bool = False, end: pd.Timestamp | None = None):
+    """Load and build features once; return evaluate(params, start, end), every trading date, bars and features.
+    end: bars after it are never loaded (holdout A stops at split.holdout_end, so holdout B stays unseen)."""
+    bars = load_bars(cfg, include_holdout=include_holdout, end=end)
     features = build_features(bars, cfg.features)
     trading_dates = pd.DatetimeIndex(bars.index.normalize().tz_localize(None).unique())
 
@@ -255,8 +258,82 @@ def cents_chart(table: pd.DataFrame) -> plt.Figure:
     return figure
 
 
+def engine_cfg(cfg):
+    """The engine reads the grid from validation.grid and the selected params from cfg.strategy. Validation and
+    holdout both use this, so their config hashes match."""
+    return replace(cfg, strategy=cfg.kalman_rule,
+                   validation=replace(cfg.validation, grid=cfg.kalman_grid, heatmaps=[]))
+
+
+def holdout_a(cfg) -> None:
+    """Holdout A, once: the locked rule from split.holdout_start to split.holdout_end. Bars after holdout_end are
+    never loaded, so holdout B stays unseen. The engine refuses unless the latest validation has this exact config
+    and passed, and refuses a second holdout run."""
+    from strategies.wheat_corn_lag.harvest import time_of_day          # harvest imports this module
+    end = pd.Timestamp(cfg.split.holdout_end, tz="UTC")
+    evaluate, _, bars, _ = make_kalman_evaluator(cfg, include_holdout=True, end=end)
+    result = run_holdout(engine_cfg(cfg), evaluate, STRATEGY_DIR)
+    trades = result["daily"].attrs["trades"]
+    cost = cfg.kalman_rule.cost_ticks * TICK_CENTS
+    weeks = (pd.Timestamp(cfg.split.holdout_end) - pd.Timestamp(cfg.split.holdout_start)).days / 7
+    net = trades["move_c"] - cost
+    summary = pd.Series({**cents_row(trades, cost), "per_week": len(trades) / weeks,
+                         "share_target": (trades["exit_reason"] == "target").mean(),
+                         "share_stop": (trades["exit_reason"] == "stop").mean(),
+                         "hours_held": (trades["exit_bar"] - trades["entry_bar"]).mean() / 4,
+                         "longs": int((trades["side"] > 0).sum()), "shorts": int((trades["side"] < 0).sum()),
+                         "net_cents_total": net.sum(), "dollars_per_contract": net.sum() * 50})
+
+    def by(groups) -> pd.DataFrame:
+        return pd.DataFrame([{"group": key, **cents_row(part, cost)} for key, part in trades.groupby(groups)])
+
+    by_month = by(trades["exit_time"].dt.strftime("%Y-%m"))
+    entry_times = pd.Series(bars.index[trades["entry_bar"].values - 1], index=trades.index)
+    by_session = by(time_of_day(entry_times))
+    by_side = by(trades["side"].map({1: "long", -1: "short"}))
+    by_exit = by(trades["exit_reason"])
+
+    checks = [("trades 35-90", 35 <= len(trades) <= 90, len(trades)),
+              ("win rate 60-67% (descriptive)", 0.60 <= summary["hit_rate"] <= 0.67, summary["hit_rate"]),
+              ("about 40% exit at the target (descriptive)", 0.30 <= summary["share_target"] <= 0.50,
+               summary["share_target"]),
+              ("net per trade not below -1 c (warning line)", summary["net_per_trade_c"] >= -1.0,
+               summary["net_per_trade_c"]),
+              ("net per trade in the consistent band -0.7..+3.7 c", -0.7 <= summary["net_per_trade_c"] <= 3.7,
+               summary["net_per_trade_c"])]
+    pd.set_option("display.width", 220)
+    print(f"\n== HOLDOUT A {cfg.split.holdout_start:%Y-%m-%d} to {cfg.split.holdout_end:%Y-%m-%d}, locked rule, cents"
+          f" (net per trade = all trades after costs)")
+    print(summary.round(2).to_string())
+    print("\n== against the expectations written before the run")
+    for name, ok, value in checks:
+        print(f"  {'OK  ' if ok else 'NOT '} {name}: {value:.2f}")
+    for title, table in [("by month (exit)", by_month), ("by entry time (Chicago session)", by_session),
+                         ("by side", by_side), ("by exit", by_exit)]:
+        print(f"\n-- {title}")
+        print(table.round(2).to_string(index=False))
+
+    run_dir = result["run_dir"]
+    summary.to_frame("holdout_A").to_csv(run_dir / "cents_summary.csv")
+    trades.to_csv(run_dir / "trades.csv")
+    for name, table in [("by_month", by_month), ("by_session", by_session), ("by_side", by_side), ("by_exit", by_exit)]:
+        table.to_csv(run_dir / f"cents_{name}.csv", index=False)
+    figure, axis = plt.subplots(figsize=(11, 4.4))
+    axis.plot(trades["exit_time"], net.cumsum().values, marker="o", ms=3, lw=1.5)
+    axis.axhline(0, color="grey", lw=0.8)
+    axis.set_ylabel("cumulative net cents, 1 contract per trade")
+    axis.set_title(f"Holdout A, locked rule: {len(trades)} trades, net per trade {summary['net_per_trade_c']:+.2f} c",
+                   loc="left")
+    figure.tight_layout()
+    figure.savefig(run_dir / "cents_equity.png", dpi=130)
+    print(f"\ncents tables, trades and chart added to {run_dir}")
+
+
 if __name__ == "__main__":
     cfg = load()
+    if "--holdout" in sys.argv:
+        holdout_a(cfg)
+        sys.exit()
     evaluate, trading_dates, bars, features = make_kalman_evaluator(cfg)          # development data only
 
     # self-check: the tradable bars are exactly the bars Layer 1 scored like for like
@@ -277,10 +354,7 @@ if __name__ == "__main__":
     marked = evaluate({}, pd.Timestamp(cfg.split.development_start), pd.Timestamp(cfg.split.holdout_start))
     assert abs(marked["ret"].sum() - marked.attrs["trades"]["ret"].sum()) < 1e-9, "session P&L != trade returns"
 
-    # the engine reads the grid from validation.grid and the selected params from cfg.strategy
-    kalman_cfg = replace(cfg, strategy=cfg.kalman_rule,
-                         validation=replace(cfg.validation, grid=cfg.kalman_grid,
-                                            heatmaps=[]))
+    kalman_cfg = engine_cfg(cfg)
     result = run_validation(kalman_cfg, evaluate, trading_dates, STRATEGY_DIR)
 
     # the same result in cents: every fold's pick (made from earlier folds only) next to the selected params
