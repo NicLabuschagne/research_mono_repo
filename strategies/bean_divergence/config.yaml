@@ -1,4 +1,4 @@
-# Bean divergence (outright ZS from relative strength vs products). See README for the hypothesis.
+# Bean fair value (Kalman crush) research. See README for the current state and decisions.
 data_path: data/raw/latest_df_backup.parquet     # same 1-minute ZS/ZM/ZL file as the crush strategy
 
 split:
@@ -8,8 +8,7 @@ split:
 
 research:
   bar_minutes: 5
-  lookbacks_bars: [6, 12, 24]      # 30 min, 1 h, 2 h (plus "since session open")
-  horizons_bars: [3, 6, 12, 24, 48]  # 15 min to 4 h, never past the session close
-  z_window_days: 20                # feature scaling: previous days only
-  event_z: 1.0                     # |z| both features must reach for the event study
+  z_half_life_bars: 48             # adaptive z: gap / its 4-hour exponential RMS
+  trigger_z: 1.645                 # one trigger per move: the first bar with |z| >= this
+  rearm_z: 0.6745                  # the same side can fire again only after |z| is back inside this
   cost_ticks: 1.0                  # ZS round trip
