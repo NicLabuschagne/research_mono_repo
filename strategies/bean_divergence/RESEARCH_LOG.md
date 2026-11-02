@@ -248,3 +248,10 @@ you faded). The relative-value information is best traded as the hedged spread (
   12 Jul), holiday reopens, the Feb 2022 weekend - a report-time flag is a meta-model feature.
   Effect: bean results moved slightly (live beans +0.2 to +0.5 ticks, was +0.3 to +0.6); the crush strategy's
   development walk-forward OOS Sharpe 2.53 -> 2.27 (same parameters, still passes every gate).
+
+## 2026-11-02: triple-barrier labels
+
+`labels.py`: barriers in sigma_1h (4-hour recent volatility x sqrt(12)), k 0.5 / 0.75 / 1.0, stop 1x / 1.25x, 60 min.
+The first run filled targets at the barrier but stops at the crossing 1-min close: random entries lost ~1 tick
+gross from that asymmetry alone. Fixed: beans touches on 1-min high / low (same minute -> stop), all fills at the
+barrier. Results in the README; Europe spread (beans passive) breakeven before any meta-model.
