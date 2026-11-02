@@ -1,0 +1,95 @@
+# Wheat-corn lag. Every number the research uses lives here.
+wheat_file: WHEAT_futures_15m_2020-01-23_2026-10-30.parquet   # in data/raw; CBOT futures, cents/bu, bars stamped at OPEN
+corn_file: CORN_futures_15m_2020-01-23_2026-10-30.parquet
+corn_contracts_file: ZC_contracts_ohlcv-1h_2010-2026.dbn.zst   # Databento ZC contracts: exact corn roll dates
+soy_file: bars_15m.parquet          # data/processed, crush build from Databento ZS contracts: Jul 2020 - Dec 2025 only
+usd_file: eur_usd_15m.csv           # data/raw, LSE EURUSD 15m (no DXY available): USD strength = -log EURUSD
+bar_minutes: 15
+
+# Both files are unadjusted front month. Session boundaries from wheat FND-10 to FND+3 business days (and
+# corn's exact switches) may hide a roll: the series is cut there and stitched everywhere else. See strategy.py.
+roll_business_days_before_fnd: 10
+roll_business_days_after_fnd: 3
+
+split:
+  development_start: 2020-01-23 00:00:00
+  holdout_start: 2026-01-01 00:00:00         # locked 2026-10-30; untouched until validation passes every gate
+  holdout_end: null
+
+# Step 4. Lookbacks and horizons in 15-minute bars (4 = 1 hour, 71 = about one session).
+features:
+  lookbacks_bars: [2, 4, 8, 16, 32, 71, 106, 142, 213]   # 30m .. 3 sessions (106-213 = the Step 6 plateau)
+  horizons_bars: [1, 2, 4, 8, 16, 32, 71, 142, 213, 284]   # 15m ... about 4 sessions
+  stats_window_bars: 1420                        # 20 sessions
+  kalman_beta_sd_per_session: 0.02
+  kalman_warmup_bars: 1420
+  f0_ratio: 1.5
+  f0_flat_sd: 0.5
+  level_windows_bars: [710, 1420, 2840]          # model C: 10, 20, 40 sessions
+  kalman_memory_sessions: [5, 10, 20]            # model K speeds (bean convention, wheat horizon); z uses stats_window_bars
+  factor_sets:                                   # multi-factor fair values (multifactor.py): c corn, s soy, u USD
+    c: [c]
+    cs: [c, s]
+    cu: [c, u]
+    csu: [c, s, u]
+
+# Step 6. The v2 rule: fade wheat's overshoot of a corn move, small targets, re-enter while it persists.
+# Selected params: the gates are checked on these and the holdout runs with them.
+strategy:
+  lookback: 142                  # middle of the 1.5-4 session plateau (robustness.py)
+  scaling: empirical
+  corn_sd: 1.0
+  own_sd: 1.0                    # the strong signal is the baseline (trader's choice); a meta model may widen it later
+  target_share: 0.5              # agreed 2026-10-30: target 0.5 x D, safety stop 2 x D, time stop 1 session
+  stop_share: 2.0
+  level_unit: divergence
+  max_hold_bars: 71
+  instrument: outright
+  reentry: false                 # immediate re-entry: 31 trades, -13 bp in the first look; re-TRIGGERS are always traded
+  entry_delay_bars: 1            # signal at bar t's close, fill at bar t+1's OPEN. A stress, not a tuning knob
+  cost_ticks: 1.4                # a stress, not a tuning knob: keep it out of the grid
+
+# The adopted base (2026-11-02): Kalman M20 level gap / its 20-session RMS, wheat outright, tail triggers.
+# LOCKED 2026-11-02 (README "LOCKED RULE", config hash 5721fc9f45): change nothing here without re-validating.
+# Selected in sample: hold_test.py (1-session hold), then harvest.py 2026-11-02 (20% tails, re-arm each session
+# and every 4.5 h while s stays in the tail, at most 2 positions open). kalman_rule.py.
+kalman_rule:
+  memory_sessions: 20
+  tail: 0.20
+  per_session: true
+  rearm_bars: 18                   # 4.5 hours; 0 = off
+  max_open: 2
+  target_gap: 0.5                  # exit when half the gap has closed (exits.py 2026-11-02); 0 = off
+  stop_gap: 2.0                    # safety stop at 2 x the gap; 0 = off
+  min_gap_cents: 6.0               # adopted 2026-11-02 (runs/20261102-154125_validation); 0 = off
+  hold_bars: 71
+  quantile_window_bars: 17892      # one year (252 sessions x 71 bars)
+  quantile_min_bars: 1420          # 20 sessions
+  cost_ticks: 1.4
+# Done: harvest grid (tail 0.1/0.2/0.3 x rearm_bars 0/36/18 x max_open 1/2/3, runs/20261102-145204);
+# exits (target_gap 0/0.5/1 x stop_gap 0/2, runs/20261102-152733).
+# Open choice now: a minimum gap. Rule fixed before the run: adopt 6 c only if it gives MORE net cents per week
+# than 0, a mean fold Sharpe no lower, and the walk-forward picks a non-zero minimum in >= 3 of 5 folds.
+kalman_grid:
+  min_gap_cents: [0.0, 4.0, 6.0, 8.0]
+
+validation:
+  n_folds: 6
+  periods_per_year: 252          # one return per session
+  grid:
+    lookback: [32, 71]
+    corn_sd: [0.0, 1.0]          # 0 = control: fade wheat's own move with no corn condition
+    target_share: [0.25, 0.5, 5.0]   # 5.0 = effectively no target: let it run to the time stop
+    stop_share: [0.5, 1.0, 5.0]      # 5.0 = effectively no stop. With no target too: a pure H-bar exit
+    max_hold_bars: [16, 71]          # H: 4 hours or one session
+    # instrument: outright only from 2026-10-30 (trader's decision; spread lost at every H on double costs)
+  heatmaps:
+    - [lookback, target_share]
+    - [target_share, stop_share]
+    - [max_hold_bars, target_share]
+
+gates:
+  min_mean_sharpe: 0.5
+  min_pct_folds_positive: 0.6
+  min_trades: 100                # counts re-entries too; independent episodes are reported next to it
+  min_wf_oos_sharpe: 0.3

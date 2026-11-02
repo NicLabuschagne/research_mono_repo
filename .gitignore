@@ -8,3 +8,6 @@ __marimo__/
 data/
 strategies/crush_strategy/output/trades.csv
 *.egg-info/
+
+# research run outputs (charts, tables): kept locally, not committed
+strategies/wheat_corn_lag/runs/
