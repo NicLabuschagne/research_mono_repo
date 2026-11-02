@@ -38,10 +38,9 @@ from scipy.stats import spearmanr
 
 from core_quant.config import save_run
 from core_quant.theme import set_theme
-from strategies.wheat_corn_lag.backtest import TICK_CENTS
 from strategies.wheat_corn_lag.features import build_features
 from strategies.wheat_corn_lag.harvest import time_of_day
-from strategies.wheat_corn_lag.kalman_rule import book, kalman_signal, trade_paths
+from strategies.wheat_corn_lag.kalman_rule import TICK_CENTS, book, kalman_signal, trade_paths
 from strategies.wheat_corn_lag.strategy import STRATEGY_DIR, load, load_bars
 
 SESSION = 71

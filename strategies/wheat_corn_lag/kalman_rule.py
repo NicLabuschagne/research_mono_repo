@@ -21,7 +21,7 @@ Exits     optional target / safety stop in multiples of the Kalman gap at entry 
           both touched in one 15-minute bar -> the stop. An early exit frees its slot for the next trigger.
 Minimum   min_gap_cents: skip a trigger whose Kalman gap at entry (cents at the entry price) is smaller; it never
           takes a slot.
-P&L       log return of wheat notional, marked to market bar by bar, summed per session (backtest.session_returns):
+P&L       log return of wheat notional, marked to market bar by bar, summed per session (session_returns):
           the unit the walk-forward scores. Next to it, in CENTS: net per trade (all trades, after costs) and
           average winner / average loser (the size of the winning / losing trades only).
 """
@@ -35,12 +35,12 @@ import numpy as np
 import pandas as pd
 
 from core_quant.walk_forward import run_holdout, run_validation, score
-from strategies.wheat_corn_lag.backtest import TICK_CENTS, session_returns
-from strategies.wheat_corn_lag.edge_map import tail_table
 from strategies.wheat_corn_lag.features import build_features
 from strategies.wheat_corn_lag.strategy import STRATEGY_DIR, KalmanRuleConfig, load, load_bars
 
 A_LOOKBACKS = (106, 142, 213)
+TICK_CENTS = 0.25
+TAILS_CENTS = [5, 10]                       # win / loss tails reported next to the net (cents)
 STOP_SLIPPAGE_CENTS = TICK_CENTS
 
 
@@ -171,6 +171,38 @@ def gap_barriers(bars: pd.DataFrame, trades: pd.DataFrame, gap: pd.Series, rule:
     trades["move_c"] = result["net_c"].values                    # cents before costs (stop slippage included)
     trades["exit_reason"] = result["reason"].values
     return trades
+
+
+def tail_table(moves_cents: pd.Series, cost_cents: float) -> dict:
+    net = moves_cents.dropna() - cost_cents
+    row = {"trades": len(net), "mean_c": net.mean(), "median_c": net.median(), "hit_rate": (net > 0).mean(),
+           "avg_win_c": net[net > 0].mean(), "avg_loss_c": net[net <= 0].mean()}
+    for tail in TAILS_CENTS:
+        row[f"share_>=+{tail}c"] = (net >= tail).mean()
+        row[f"share_<=-{tail}c"] = (net <= -tail).mean()
+    return row
+
+
+def session_returns(bars: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
+    """Per trading date: P&L marked to market bar by bar (log return of notional), costs at entry, trades closed."""
+    wheat = np.zeros(len(bars))           # wheat held over each bar, summed over open trades (they may overlap)
+    corn = np.zeros(len(bars))            # corn held (the spread hedge), summed the same way
+    extra = np.zeros(len(bars))           # the entry bar: open-to-close move, minus costs
+    log_w, log_c = bars["log_w"].values, bars["log_c"].values
+    for trade in trades.itertuples():
+        wheat[trade.entry_bar + 1:trade.exit_bar + 1] += trade.side          # full bars: entry+1 .. exit
+        corn[trade.entry_bar + 1:trade.exit_bar + 1] -= trade.side * trade.hedge
+        entry_bar_move = (log_w[trade.entry_bar] - trade.entry_open_w) - trade.hedge * (log_c[trade.entry_bar] - trade.entry_open_c)
+        extra[trade.entry_bar] += trade.side * entry_bar_move - trade.cost
+        fill = getattr(trade, "exit_fill_log", np.nan)
+        if not np.isnan(fill):                        # exit at a limit / stop price instead of the bar's close
+            extra[trade.exit_bar] += trade.side * (fill - log_w[trade.exit_bar])
+    bar_pnl = wheat * np.nan_to_num(bars["ret_w"].values) + corn * np.nan_to_num(bars["ret_c"].values) + extra
+    dates = bars.index.normalize().tz_localize(None)
+    daily = pd.DataFrame({"ret": pd.Series(bar_pnl, index=bars.index).groupby(dates).sum()})
+    closed = pd.Series(1, index=trades["exit_time"].dt.normalize().dt.tz_localize(None)) if len(trades) else pd.Series(dtype=int)
+    daily["trades"] = closed.groupby(level=0).sum().reindex(daily.index, fill_value=0)
+    return daily
 
 
 def kalman_signal(features: pd.DataFrame, rule: KalmanRuleConfig) -> pd.Series:

@@ -31,12 +31,12 @@ import pandas as pd
 
 from core_quant.config import save_run
 from core_quant.theme import set_theme
-from strategies.wheat_corn_lag.edge_map import COST_TICKS, TICK_CENTS, tail_table
 from strategies.wheat_corn_lag.features import build_features
-from strategies.wheat_corn_lag.kalman_rule import flat_only, tail_triggers, trades_for
+from strategies.wheat_corn_lag.kalman_rule import TICK_CENTS, flat_only, tail_table, tail_triggers, trades_for
 from strategies.wheat_corn_lag.layer1 import BASE, KALMAN, SPEEDS, build_signals
 from strategies.wheat_corn_lag.strategy import STRATEGY_DIR, load, load_bars
 
+COST_TICKS = 1.4                                # round trip, as everywhere in this project
 HOLDS = {"1 session": 71, "2 sessions": 142}
 TAILS = [0.10, 0.20, 0.30]
 FOCUS_TAIL = 0.10

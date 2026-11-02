@@ -46,7 +46,8 @@ STRATEGY_DIR = Path(__file__).parent
 
 @dataclass(frozen=True)
 class StrategyConfig:
-    """The v2 rule (backtest.py). Every grid name in config.yaml must be a field here."""
+    """Model A settings (its backtest.py was removed 2026-11-02). Kept so config.yaml and the locked config hash stay
+    unchanged; the engine swaps in kalman_rule for the Kalman base."""
     lookback: int = 32                     # L, bars: the window the divergence is measured over
     scaling: str = "empirical"             # "empirical": own_ze / corn_ze (actual L-bar sd); "sqrt": own_z / corn_z
     corn_sd: float = 1.0                   # |corn_z_L| needed, same direction as wheat's own move; 0 = no corn condition

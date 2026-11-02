@@ -34,9 +34,8 @@ import pandas as pd
 
 from core_quant.config import save_run
 from core_quant.theme import set_theme
-from strategies.wheat_corn_lag.backtest import TICK_CENTS
 from strategies.wheat_corn_lag.features import build_features
-from strategies.wheat_corn_lag.kalman_rule import cap_open, cents_row, kalman_signal, tail_triggers, trades_for
+from strategies.wheat_corn_lag.kalman_rule import TICK_CENTS, cap_open, cents_row, kalman_signal, tail_triggers, trades_for
 from strategies.wheat_corn_lag.strategy import STRATEGY_DIR, load, load_bars
 
 SESSION_BARS = 71
