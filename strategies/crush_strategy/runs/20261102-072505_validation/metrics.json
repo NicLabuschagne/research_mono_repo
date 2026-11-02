@@ -1,0 +1,136 @@
+{
+  "kind": "validation",
+  "git": {
+    "commit": "65ab4a9",
+    "dirty": true
+  },
+  "config_hash": "2df6d88565",
+  "selected_params": {
+    "threshold": 1.5,
+    "profit_sigma": 1.0,
+    "stop_sigma": 4.0,
+    "holding_hours": 12,
+    "min_hours_left": 3.0
+  },
+  "n_combos_tried": 540,
+  "folds": [
+    [
+      "2021-01-04",
+      "2021-08-26"
+    ],
+    [
+      "2021-08-27",
+      "2022-04-21"
+    ],
+    [
+      "2022-04-22",
+      "2022-12-14"
+    ],
+    [
+      "2022-12-15",
+      "2023-08-11"
+    ],
+    [
+      "2023-08-14",
+      "2024-04-08"
+    ],
+    [
+      "2024-04-09",
+      "2024-11-29"
+    ]
+  ],
+  "development": {
+    "sharpe": 2.6786818544898954,
+    "total_return": 16.76397392312618,
+    "max_drawdown": -1.1034705039077934,
+    "trades": 295
+  },
+  "selected_across_folds": {
+    "mean_sharpe": 2.57770995821489,
+    "std_sharpe": 1.3945887578445273,
+    "min_sharpe": 0.7138377475816532,
+    "pct_folds_positive": 1.0
+  },
+  "walk_forward_oos": {
+    "sharpe": 2.269020717495998,
+    "total_return": 10.782643620850726,
+    "max_drawdown": -1.1034705039077934,
+    "trades": 219
+  },
+  "gates": [
+    {
+      "gate": "mean fold Sharpe",
+      "value": 2.57770995821489,
+      "minimum": 1.0,
+      "passed": true
+    },
+    {
+      "gate": "share of folds positive",
+      "value": 1.0,
+      "minimum": 0.67,
+      "passed": true
+    },
+    {
+      "gate": "development trades",
+      "value": 295.0,
+      "minimum": 150.0,
+      "passed": true
+    },
+    {
+      "gate": "walk-forward OOS Sharpe",
+      "value": 2.269020717495998,
+      "minimum": 0.5,
+      "passed": true
+    }
+  ],
+  "gates_passed": true,
+  "tearsheet": {
+    "start": "2021-01-04",
+    "end": "2024-11-29",
+    "periods": 984,
+    "total_return": 16.76397392312618,
+    "annual_return": 4.293212833971339,
+    "annual_volatility": 1.6027333842483886,
+    "sharpe": 2.6786818544898954,
+    "sortino": 4.458415382001302,
+    "max_drawdown": -1.1034705039077934,
+    "calmar": 3.8906457569708466,
+    "longest_drawdown_periods": 106,
+    "pct_months_positive": 78.72340425531915,
+    "best_month": 1.9578183672848999,
+    "worst_month": -0.5984020488009785,
+    "trades": 295,
+    "trades_per_month": 6.276595744680851,
+    "win_rate": 67.45762711864407,
+    "avg_win": 0.1560825316703819,
+    "avg_loss": -0.1489213529091648,
+    "payoff_ratio": 1.0480869843130225,
+    "expectancy": 0.05682703024788536,
+    "profit_factor": 2.17259697789887,
+    "best_trade": 0.3797054361242376,
+    "worst_trade": -0.6102493590121183,
+    "max_consecutive_losses": 4,
+    "expectancy_c_per_bu": 0.7275878774559562,
+    "total_c_per_bu": 214.6384238495071,
+    "median_holding_minutes": 320.0,
+    "exit_profit_pct": 51.52542372881356,
+    "exit_time_pct": 48.13559322033898,
+    "exit_stop_pct": 0.3389830508474576
+  },
+  "tearsheet_walk_forward_oos": {
+    "start": "2021-08-27",
+    "end": "2024-11-29",
+    "periods": 820,
+    "total_return": 10.782643620850726,
+    "annual_return": 3.3136904786029056,
+    "annual_volatility": 1.4604055630923303,
+    "sharpe": 2.269020717495998,
+    "sortino": 3.5500482584035393,
+    "max_drawdown": -1.1034705039077934,
+    "calmar": 3.002971503876101,
+    "longest_drawdown_periods": 106,
+    "pct_months_positive": 75.0,
+    "best_month": 1.9578183672848999,
+    "worst_month": -0.6007006298815275
+  }
+}

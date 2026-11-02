@@ -32,11 +32,17 @@ Every run saves a tear sheet (`tearsheet.png`, metrics in `metrics.json`, `month
 
 | Sample | Trades | Win rate | Net / trade | Return | Max DD | Sharpe | Calmar | Profit factor |
 |---|---|---|---|---|---|---|---|---|
-| Development, Jan 2021 - Nov 2024 | 292 | 69% | 0.87 c/bu | +18.3% | -1.1% | 2.90 | 4.20 | 2.38 |
+| Development, Jan 2021 - Nov 2024 | 295 | 67% | 0.73 c/bu | +16.8% | -1.1% | 2.68 | 3.89 | 2.17 |
 | Holdout, Dec 2024 - Dec 2025 (see note) | 57 | 67% | 0.47 c/bu | +2.6% | -1.4% | 1.33 | 1.82 | 1.59 |
 
-Development walk-forward: out-of-sample Sharpe 2.53, all 6 folds positive, every gate passed
-(`runs/20261029-112032_validation`). Holdout: `runs/20261029-112059_holdout`.
+Development walk-forward: out-of-sample Sharpe 2.27, all 6 folds positive, every gate passed
+(`runs/20261102-072505_validation`). Holdout: `runs/20261029-112059_holdout`.
+
+**Data fix 2026-11-02:** the roll detector in `data_ingest.py` missed a roll where all three legs switched contract
+at once (21 Jun 2022 19:00 CT: ZS -10.6%, ZM -6.9%, ZL -3.8%) and an oil switch-back (17 Jun 2021). With them
+removed, the same selected parameters give the development row above (before: 292 trades, 69%, 0.87 c/bu,
++18.3%, Sharpe 2.90, walk-forward OOS 2.53 - the best trade, 0.48%, was partly the artefact). The holdout was not
+re-run; its prices are unaffected (the back-adjustment only rescales prices before a switch).
 
 **The holdout is a contaminated check, not a clean test.** The same period was used to test the original
 version of this strategy (Sharpe 0.07) before this recalibration. No choice below was made on holdout data,

@@ -232,3 +232,19 @@ Pricing and execution are now separate. Layer 1 judges the fair value only on st
 **Conclusion (outright study, before layer 1):** no outright directional signal from relative strength vs products in this data. The discretionary
 edge more likely came from context and execution the features do not capture (news, order flow, which level
 you faded). The relative-value information is best traded as the hedged spread (`strategies/crush_strategy`).
+
+## 2026-11-02: cleanup, favourable excursion, data fix
+
+- Restructured into `fair_value.py` / `triggers.py` / `outcomes.py` / `charts.py`; one trigger per move at
+  |z| >= 1.645 with z as a feature; reproduced the earlier live and prior-close results exactly before the fix.
+- Best move in the trade's favour after Europe / US triggers (`outcomes.py`, best_move table): see README.
+- **Data fix** (`strategies/crush_strategy/data_ingest.py`): the roll detector needed the other two legs to agree,
+  so it missed 21 Jun 2022 19:00 CT, where all three legs switched contract at once (ZS -10.6%, ZM -6.9%,
+  ZL -3.8%; beans showed a -644 tick bar), and an oil switch-back on 17 Jun 2021 (+7.0%, the day after a flagged
+  -7.2%). New rule: a leg gapping over 6% as an outlier vs the others is a switch (no news-driven open did; the
+  largest is +3.6%, the Feb 2022 invasion weekend), and when two or more legs do so at one open, the other legs'
+  outsized gaps there are switches too. The dry run added exactly those four gaps and nothing else.
+  Remaining large bars are real: USDA reports at 11:00 CT (30 Jun 2021 +294 ticks, 30 Jun 2023, 31 Mar, 9 Nov,
+  12 Jul), holiday reopens, the Feb 2022 weekend - a report-time flag is a meta-model feature.
+  Effect: bean results moved slightly (live beans +0.2 to +0.5 ticks, was +0.3 to +0.6); the crush strategy's
+  development walk-forward OOS Sharpe 2.53 -> 2.27 (same parameters, still passes every gate).

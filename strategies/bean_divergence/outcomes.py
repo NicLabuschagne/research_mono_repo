@@ -11,6 +11,8 @@ session cut (breaks and the overnight gap are held through).
     tails    : share of triggers beyond +/-5 and +/-10 ticks - the win side and the loss side, not just the net mean
     race     : on 5-minute closes within 30 min, does beans reach +R ticks before -R? A coin flip is 50%; to beat a
                cost of c ticks per round trip the win share must exceed 0.5 + c / (2R).
+    best move: the favourable excursion - the best close in the trade's favour within 30 min / 1 h / 2 h (0 if it
+               never went favourable) and the minutes it took to get there. Not net: losses are not in it.
 Baseline: 5 random bars per trigger, same session and half, random direction. Development only, no costs.
 
     python -m strategies.bean_divergence.outcomes                 # live gap (the base)
@@ -29,6 +31,16 @@ MAX_BARS = 48
 RACE_TICKS, RACE_BARS = [2, 3, 4], 6
 TAIL_TICKS = [5, 10]
 RANDOM_PER_TRIGGER = 5
+BEST_WINDOWS = {"30m": 6, "1h": 12, "2h": 24}
+BAR_MINUTES = 5
+
+
+def best_move(path: np.ndarray, bars: int) -> tuple[float, float]:
+    """Best close in the trade's favour within the first `bars` closes and the minutes to reach it (nan if never > 0)."""
+    k = int(np.argmax(path[:bars]))
+    if path[k] <= 0:
+        return 0.0, np.nan
+    return path[k], (k + 1) * BAR_MINUTES
 
 
 def race(path: np.ndarray, r: float) -> float:
@@ -54,6 +66,9 @@ def measure(s: int, side: int, hedge: tuple, log_c: dict, log_open_zs: np.ndarra
         row[f"out_{label}"], row[f"spr_{label}"], row[f"open_{label}"] = beans[h - 1], spread[h - 1], from_open[h - 1]
     for r in RACE_TICKS:
         row[f"race_{r}"] = race(beans, r)
+    for label, w in BEST_WINDOWS.items():
+        row[f"out_best_{label}"], row[f"out_best_min_{label}"] = best_move(beans, w)
+        row[f"spr_best_{label}"], row[f"spr_best_min_{label}"] = best_move(spread, w)
     return row
 
 
@@ -125,8 +140,29 @@ if __name__ == "__main__":
                               "ticks per decided race, gross": (2 * s_r.mean() - 1) * r})
     races = pd.DataFrame(race_rows)
 
+    # best move in the trade's favour, Europe and US (pooled halves; the median per half is shown as a stability check)
+    assert best_move(np.array([-1.0, 2.0, 5.0, 3.0]), 4) == (5.0, 15) and best_move(np.array([-1.0, -2.0]), 2)[0] == 0.0
+    best_rows = []
+    for sess in ["europe", "us"]:
+        for instrument, prefix in [("beans", "out"), ("spread", "spr")]:
+            for label, w in BEST_WINDOWS.items():
+                s_g = sig[sig["session"] == sess]
+                x, minutes = s_g[f"{prefix}_best_{label}"], s_g[f"{prefix}_best_min_{label}"]
+                r_x = rnd[rnd["session"] == sess][f"{prefix}_best_{label}"]
+                best_rows.append({"session": sess, "instrument": instrument, "window": label, "n": len(x),
+                                  "never favourable %": (x == 0).mean() * 100, "min": x.min(),
+                                  "p25": x.quantile(0.25), "median": x.median(), "mean": x.mean(),
+                                  "p75": x.quantile(0.75), "p90": x.quantile(0.9), "max": x.max(),
+                                  "random median": r_x.median(), "random mean": r_x.mean(),
+                                  "median 2021-22": x[s_g["half"] == "2021-22"].median(),
+                                  "median 2023-24": x[s_g["half"] == "2023-Nov24"].median(),
+                                  "minutes p25": minutes.quantile(0.25), "minutes median": minutes.median(),
+                                  "minutes p75": minutes.quantile(0.75),
+                                  "best at window end %": (minutes == w * BAR_MINUTES).mean() * 100})
+    best = pd.DataFrame(best_rows)
+
     suffix = "" if live else "_prior_close"
-    for name, table in [("horizons", horizons), ("tails", tails), ("race", races)]:
+    for name, table in [("horizons", horizons), ("tails", tails), ("race", races), ("best_move", best)]:
         table.to_csv(STRATEGY_DIR / "output" / f"outcomes_{name}{suffix}.csv", index=False)
     pd.set_option("display.width", 250)
     print(f"{'live' if live else 'prior-close'} gap: {len(sig)} triggers")
@@ -135,3 +171,5 @@ if __name__ == "__main__":
     print("\nwin side and loss side (share of triggers beyond +/- k ticks) and the net mean:\n",
           tails.round(1).to_string(index=False))
     print("\nrace within 30 min on beans: +R ticks before -R (5-min closes):\n", races.round(1).to_string(index=False))
+    print("\nbest move in the trade's favour (ticks, 5-min closes) and minutes to reach it:\n",
+          best.round(1).to_string(index=False))

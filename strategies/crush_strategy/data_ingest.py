@@ -11,7 +11,10 @@ Steps
      On a session's first bar we use close/open of that bar, so the opening
      gap (where contract switches happen) is never inside a return.
   4. Detect contract switches: a switch moves ONE leg at a session open while
-     the other two legs agree. We flag large single-leg gaps.
+     the other two legs agree. We flag large single-leg gaps. A gap over 6% that
+     is an outlier vs the other legs is a switch even if they disagree, and when
+     several legs switch at once (e.g. 21 Jun 2022) the remaining legs' outsized
+     gaps at that open are switches too.
   5. Back-adjust prices: remove flagged switch gaps by scaling all earlier prices,
      so price levels are continuous across switches.
   6. Resample to N-minute bars that restart at every session open, so no bar
@@ -32,6 +35,7 @@ LEGS = ["ZS", "ZM", "ZL"]
 SESSION_BREAK_MINUTES = 30
 ROLL_Z_THRESHOLD = 8          # a leg's opening gap must be an 8-sigma outlier vs the other legs
 OTHERS_AGREE_Z = 4            # ...while the other two legs agree with each other
+ABS_SWITCH_GAP = 0.06         # ...or it gaps over 6% (no news-driven open did; largest 3.6%, Feb 2022)
 SESSION_OPEN_TIME = {"evening": pd.Timedelta(hours=19), "day": pd.Timedelta(hours=8, minutes=30)}
 
 
@@ -81,12 +85,19 @@ def flag_contract_switches(data: pd.DataFrame) -> pd.DataFrame:
     """Flag session opens where one leg gaps alone (a contract switch) while the other two agree."""
     data = data.copy()
     gaps = data.loc[data["session_open"], [f"{leg}_gap_ret" for leg in LEGS]].dropna()
+    is_switch, big, own_z = {}, {}, {}
     for leg in LEGS:
         others = [other for other in LEGS if other != leg]
-        leg_z = robust_residual_z(gaps[f"{leg}_gap_ret"].values, gaps[[f"{o}_gap_ret" for o in others]].values)
+        gap = gaps[f"{leg}_gap_ret"].values
+        leg_z = robust_residual_z(gap, gaps[[f"{o}_gap_ret" for o in others]].values)
         others_z = robust_residual_z(gaps[f"{others[0]}_gap_ret"].values, gaps[[f"{others[1]}_gap_ret"]].values)
-        is_switch = (np.abs(leg_z) > ROLL_Z_THRESHOLD) & (np.abs(others_z) < OTHERS_AGREE_Z)
-        data[f"{leg}_switch"] = pd.Series(is_switch, index=gaps.index).reindex(data.index).fillna(False).astype(bool)
+        big[leg] = (np.abs(leg_z) > ROLL_Z_THRESHOLD) & (np.abs(gap) > ABS_SWITCH_GAP)
+        is_switch[leg] = ((np.abs(leg_z) > ROLL_Z_THRESHOLD) & (np.abs(others_z) < OTHERS_AGREE_Z)) | big[leg]
+        own_z[leg] = (gap - np.median(gap)) / (np.median(np.abs(gap - np.median(gap))) * 1.4826)   # vs its usual open
+    several_switch = sum(big[leg].astype(int) for leg in LEGS) >= 2      # legs rolling together disagree with each other
+    for leg in LEGS:
+        is_switch[leg] = is_switch[leg] | (several_switch & (np.abs(own_z[leg]) > ROLL_Z_THRESHOLD))
+        data[f"{leg}_switch"] = pd.Series(is_switch[leg], index=gaps.index).reindex(data.index).fillna(False).astype(bool)
     return data
 
 
