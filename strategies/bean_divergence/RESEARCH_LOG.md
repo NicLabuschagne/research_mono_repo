@@ -255,3 +255,12 @@ you faded). The relative-value information is best traded as the hedged spread (
 The first run filled targets at the barrier but stops at the crossing 1-min close: random entries lost ~1 tick
 gross from that asymmetry alone. Fixed: beans touches on 1-min high / low (same minute -> stop), all fills at the
 barrier. Results in the README; Europe spread (beans passive) breakeven before any meta-model.
+
+## 2026-11-03: volume bars
+
+Scratch tests first: Delphic Alpha signals (no gain), quick take-profits (worse), trigger order (small), then the
+signal rebuilt on volume bars - Europe spread triggers halve and improve. Model on volume-bar triggers: top half
++1.25 at bar size 379; a cut-off leakage check passed, but 379 was the all-development mean volume (look-ahead), so
+the size was reset to 458 (Jul - Dec 2020 mean): top half +0.99 (t 2.8), 2022 +1.41 / 2023-24 +0.73. Barrier grid a
+plateau; trees no better than logistic. Kept as `volume_bars.py` (shared `sigma_1h` / `hedge_cost_ticks` /
+`minute_data` moved into labels.py).

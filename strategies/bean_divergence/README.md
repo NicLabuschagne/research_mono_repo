@@ -16,6 +16,7 @@ process is fixed.
 | `charts.py` | every trigger on the last 4 development days, beans vs fair value | `... .charts` |
 | `labels.py` | triple-barrier labels, net of costs, for every trigger: beans and spread, a fixed grid of barriers, plus random entries | `... .labels` |
 | `meta_model.py` | meta-label features (leakage-checked, screened) + walk-forward logistic per instrument; add `fit` to skip the feature rebuild | `... .meta_model` |
+| `volume_bars.py` | the signal on volume bars (458 ZS contracts): triggers, clock-time labels, the same model, a cut-off leakage check | `... .volume_bars` |
 
 Add `prior_close` to any run for the prior-close gap; the default is the live gap. Numbers below are from the
 roll-fixed data (2026-11-02). Units are ZS ticks
@@ -190,6 +191,83 @@ not followed up.)
   If trading is restricted to a session, score with the all-session model and filter afterwards. Session results
   (scratch, 2022 - Nov 2024 out of sample): US loses in every variant; 5-min Europe spread, all-session model's top
   two thirds = +0.34 ticks at ~7.7 a week (t 1.9); 1H Europe spread +4.7 per trade but ~0.3 a week.
+
+## Volume bars (2026-11-03, `volume_bars.py`) - the current best
+
+A new bar every 458 ZS contracts (the mean 5-min bar volume in Jul - Dec 2020, set before development), restarting
+at each session open. Same Kalman drift per bar, 48-bar z, trigger rule, clock-time labels (60 min, target 1
+sigma_1h), 17 features and walk-forward logistic. Quiet hours get fewer, longer bars, so Europe fires ~5.4 triggers
+a week instead of ~12.7 - and they are better ones.
+
+With the z half-life fixed at 192 bars (see "z lookback" below; the first version used 48):
+
+| Europe spread (beans passive), stop 1.25x | net / trade | t | per week | 2022 / 2023-24 |
+|---|---|---|---|---|
+| every trigger, 2021-24 | +0.36 | | ~5.1 | |
+| model's top two thirds (out of sample 2022 on) | +0.94 | 3.1 | ~3.1 | +0.84 / +1.00 |
+| **model's top half** | **+1.44** | **4.0** | **~2.4** | **+1.37 / +1.50** |
+| model's top half, symmetric stop | +1.19 | 3.5 | ~2.4 | +1.57 / +0.94 |
+
+Asia spread: top half +0.26 (2022 +2.15, 2023-24 -0.51) - not robust. US and beans outright: negative.
+(At z = 48 the top half was +0.99, t 2.8, 2022 +1.41 / 2023-24 +0.73.)
+
+- **Leakage:** the whole pipeline rebuilt from data cut at 1 Mar 2023 gives identical bars, hedge, z, triggers and
+  features before the cut (part of the run).
+- **Bar size:** the first scratch run used 379 (the all-development mean - a look-ahead) and showed +1.25; 458 is
+  the honest number. 300 gives +0.83 - robust to the size, AUC 0.57 - 0.63.
+- **Barriers (scratch grid, size 379):** a plateau, not a peak - any target >= 1 sigma with stop >= 1x gives
+  +0.8 to +1.25 for the top half; targets of 0.5 sigma lose (cost is a third of the win). A 2-hour hold is about the
+  same but steadier in 2023-24.
+- **Trees vs logistic (scratch):** gradient-boosted trees stop after 7 - 20 rounds and do not beat the logistic
+  (top half +1.01 vs +1.25 at size 379).
+- Beans outright, Asia and US: still negative. ~2.5 ticks a week per spread at a 1.1-tick cost; limit orders on
+  the meal / oil legs are the next lever. Europe, the stop, the bar type and the size were all chosen on
+  development data - the holdout (with size 458 fixed) decides.
+
+Also tried 2026-11-03 (scratch, recorded here): Delphic Alpha signals (core_quant/feature_registry.py) - nothing
+across sessions; in Europe the mean-reversion family is consistent (IC 0.06 - 0.10) but adds ~0.01 to the model;
+quick take-profits at +2 to +8 ticks make every version worse (the edge builds over 30 - 60 min); the trigger's order
+in its session (3rd+ better in Europe) adds +0.02 to +0.07 as a Europe-only feature.
+
+**z lookback on volume bars (2026-11-03, scratch).** Only the trigger z's half-life changed; full refit each time.
+Europe spread, model's top half, stop 1.25x (symmetric in brackets), out of sample 2022 - Nov 2024, ~2.3 - 2.6 a week:
+
+| half-life (bars) | 24 | 48 (current) | 96 | 192 | 384 | 768 |
+|---|---|---|---|---|---|---|
+| top half | +0.87 (+0.69) | +0.99 (+0.82) | +1.23 (+0.94) | +1.44 (+1.19) | +1.60 (+1.26) | +1.37 (+1.09) |
+| 2022 / 2023-24 | +1.36 / +0.64 | +1.41 / +0.73 | +1.24 / +1.22 | +1.37 / +1.50 | +2.38 / +1.09 | +1.46 / +1.30 |
+| every Europe trigger | +0.24 | +0.17 | +0.33 | +0.36 | +0.42 | +0.45 |
+
+A plateau from 192 to 768 bars (+1.37 to +1.60), with 2023-24 now as strong as 2022 - the short lookback was part of
+the weak recent half (a Europe volume bar is ~13 min, a US one ~2 min, so 48 bars is little clock time when busy).
+Beans: negative at every lookback. Not yet fixed in config - six values were tried on development data.
+
+**Order flow inside the volume bar (2026-11-03) - lead found, then FAILED its pre-registered test.** Screen (scratch,
+beans ticks Jan 2021 - Jul 2022 and Nov 2022 - Nov 2023): aggressive buy - sell volume inside the trigger's volume
+bar, flipped by side, had spread IC 0.109 in Europe (0.110 / 0.125 by period) and 0.054 over all sessions.
+Pre-registered test on fresh ticks 27 Nov 2023 - 29 Nov 2024 (1,795 triggers; pass = IC >= +0.05 all sessions and
+> 0 in Europe): all sessions -0.008, Europe +0.014 -> FAIL. Second tick lead in a row that did not survive fresh
+data; beans order flow from trades alone is treated as exhausted. Bar speed and VWAP position within the bar (minute
+data) looked useful in Europe but faded in 2023-24 and lowered the model's top half (+0.91 -> +0.84).
+
+## Holdout - pre-registered 2026-11-03 (`holdout.py`, not yet run)
+
+Fixed before any holdout result was seen: volume bars of 458, **z half-life 192** (`config.yaml`), trigger 1.645 /
+0.6745, clock-time labels (60 min, target 1 sigma_1h, stop 1.25x), spread with beans passive. The 17-feature
+logistic is fitted once on all development triggers and frozen; trades are taken in Europe when p >= the median p
+of the development Europe spread triggers under that model. Holdout = 1 Dec 2024 to the end of the minute file
+(16 Dec 2025). **Judged:** net ticks per trade on those trades - PASS if > 0, strong if t >= 1.65; everything else is
+reported only. One run (a lock file stops a second). After it, 2026 data becomes the next untouched test.
+
+## The crush strategy compared (2026-11-03, scratch)
+
+`strategies/crush_strategy` trades the SLOW overnight gap (hedge frozen at the previous close, 20-day same-session z,
+held to the session close, median ~5 h): +2.9 ZS ticks a trade all legs crossed (+3.9 beans passive), ~1.5 a week,
+t 5.8, 2021-22 +4.4 / 2023-24 +1.1, Asia +3.6 / Europe +1.4. Swapping in this study's pieces one at a time made it
+worse every time: live hedge -0.7, adaptive z +1.1 (2023-24 negative), 60-min exits -1.0. On volume bars (150 /
+300 / 458) 2021-22 improves but 2023-24 falls to ~0 or below. So the two are different signals - a slow
+dislocation held for hours vs a fast one held for an hour - and each keeps its own modelling. Its Dec 2024 - Dec
+2025 holdout is already contaminated; its clean test is 2026 data.
 
 ## Where we stopped (2026-11-02, paused)
 

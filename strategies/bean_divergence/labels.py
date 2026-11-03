@@ -96,14 +96,38 @@ def confirm_bar(s: int, side: int, gap: np.ndarray, z: np.ndarray, session_id: n
     return None
 
 
-def minute_prices(cfg) -> pd.DataFrame:
-    """Back-adjusted 1-minute open / high / low / close, built exactly like the bars."""
+def minute_data(cfg) -> pd.DataFrame:
+    """The 1-minute file with sessions, switch-free returns and back-adjusted open / high / low / close, built
+    exactly like the bars."""
     data = load_minute_data(ROOT / cfg.data_path)
     data = back_adjust(flag_contract_switches(add_switch_free_returns(add_sessions(data))))
     for leg in LEGS:
         factor = data[f"{leg}_adj_close"] / data[f"{leg}_close"]          # the same back-adjustment as open / close
         data[f"{leg}_adj_high"], data[f"{leg}_adj_low"] = data[f"{leg}_high"] * factor, data[f"{leg}_low"] * factor
-    return data[[f"{leg}_adj_{f}" for leg in LEGS for f in ["open", "high", "low", "close"]]]
+    return data
+
+
+def minute_prices(cfg) -> pd.DataFrame:
+    """Back-adjusted 1-minute open / high / low / close."""
+    return minute_data(cfg)[[f"{leg}_adj_{f}" for leg in LEGS for f in ["open", "high", "low", "close"]]]
+
+
+def sigma_1h(bars: pd.DataFrame, hedge: pd.DataFrame, half_life_bars: int) -> dict[str, np.ndarray]:
+    """Expected 1-hour move in ZS ticks on 5-min bars, from bars BEFORE each bar: beans and the hedged spread."""
+    ticks = (bars["ZS_adj_close"] / TICK_CENTS).values
+    ret = {leg: bars[f"{leg}_ret"] for leg in LEGS}
+    spread = ret["ZS"] - hedge["beta_meal"] * ret["ZM"] - hedge["beta_oil"] * ret["ZL"]
+    return {"beans": adaptive_scale(ret["ZS"] * ticks, half_life_bars).values * np.sqrt(HOLD_BARS),
+            "spread": adaptive_scale(spread * ticks, half_life_bars).values * np.sqrt(HOLD_BARS)}
+
+
+def hedge_cost_ticks(bars: pd.DataFrame, hedge: pd.DataFrame, cost_ticks: float) -> np.ndarray:
+    """Round-trip cost of crossing the meal and oil legs that hedge one ZS contract, in ZS ticks."""
+    # shortcut: back-adjusted prices for contract values, a few % off before rolls
+    value = {"ZS": bars["ZS_adj_close"].values / 100 * 5000, "ZM": bars["ZM_adj_close"].values * 100,
+             "ZL": bars["ZL_adj_close"].values / 100 * 60000}
+    return (hedge["beta_meal"].values * value["ZS"] / value["ZM"] * TICK_DOLLARS["ZM"]
+            + hedge["beta_oil"].values * value["ZS"] / value["ZL"] * TICK_DOLLARS["ZL"]) / TICK_DOLLARS["ZS"] * cost_ticks
 
 
 if __name__ == "__main__":
@@ -125,16 +149,9 @@ if __name__ == "__main__":
     n = len(bars)
     a, bm, bo = (hedge[c].values for c in ["alpha", "beta_meal", "beta_oil"])
     ticks = (bars["ZS_adj_close"] / TICK_CENTS).values
-    ret = {leg: bars[f"{leg}_ret"] for leg in LEGS}
-    sigma = {"beans": adaptive_scale(ret["ZS"] * ticks, r.z_half_life_bars).values * np.sqrt(HOLD_BARS),
-             "spread": adaptive_scale((ret["ZS"] - hedge["beta_meal"] * ret["ZM"] - hedge["beta_oil"] * ret["ZL"]) * ticks,
-                                      r.z_half_life_bars).values * np.sqrt(HOLD_BARS)}
-    # hedge contracts per ZS contract (shortcut: back-adjusted prices for contract values, a few % off before rolls)
-    value = {"ZS": bars["ZS_adj_close"].values / 100 * 5000, "ZM": bars["ZM_adj_close"].values * 100,
-             "ZL": bars["ZL_adj_close"].values / 100 * 60000}
-    hedge_cost = (bm * value["ZS"] / value["ZM"] * TICK_DOLLARS["ZM"]
-                  + bo * value["ZS"] / value["ZL"] * TICK_DOLLARS["ZL"]) / TICK_DOLLARS["ZS"] * r.cost_ticks
-    cost = {"beans": np.full(n, r.cost_ticks), "spread_crossed": r.cost_ticks + hedge_cost,
+    sigma = sigma_1h(bars, hedge, r.z_half_life_bars)
+    hedge_cost = hedge_cost_ticks(bars, hedge, r.cost_ticks)
+    cost ={"beans": np.full(n, r.cost_ticks), "spread_crossed": r.cost_ticks + hedge_cost,
             "spread_beans_passive": hedge_cost}
 
     minutes = minute_prices(cfg)

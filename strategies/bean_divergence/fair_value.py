@@ -35,6 +35,8 @@ class ResearchConfig:
     trigger_z: float = 1.645
     rearm_z: float = 0.6745
     cost_ticks: float = 1.0
+    volume_bar_contracts: float = 458
+    volume_bar_z_half_life: int = 192
 
 
 @dataclass(frozen=True)

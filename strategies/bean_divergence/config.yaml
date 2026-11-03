@@ -12,3 +12,5 @@ research:
   trigger_z: 1.645                 # one trigger per move: the first bar with |z| >= this
   rearm_z: 0.6745                  # the same side can fire again only after |z| is back inside this
   cost_ticks: 1.0                  # ZS round trip
+  volume_bar_contracts: 458        # volume bars: mean ZS volume of a 5-min bar, Jul-Dec 2020 (before development)
+  volume_bar_z_half_life: 192      # volume-bar trigger z (bars); plateau 192-768, 192 the most balanced (2026-11-03)
