@@ -250,7 +250,20 @@ Pre-registered test on fresh ticks 27 Nov 2023 - 29 Nov 2024 (1,795 triggers; pa
 data; beans order flow from trades alone is treated as exhausted. Bar speed and VWAP position within the bar (minute
 data) looked useful in Europe but faded in 2023-24 and lowered the model's top half (+0.91 -> +0.84).
 
-## Holdout - pre-registered 2026-11-03 (`holdout.py`, not yet run)
+## Holdout RESULT (run 2026-11-03): FAILED
+
+Europe spread, the frozen model's top half (p >= 0.556): **-0.97 ticks a trade, t -2.06, 151 trades (2.8 a week),
+win 54%, mean win +3.7 / mean loss -6.5** - against +1.44 (t 4.0) in development. Every Europe spread trigger: -0.87
+(268 trades). Before costs the taken trades made only ~+0.1 tick: the signal had no edge in Dec 2024 - Dec 2025,
+and smaller barriers in a quieter year made the ~1.1-tick cost a bigger share. US: -0.64 (every trigger), beans
+outright negative everywhere; Asia's small positive picks (25 - 32 trades) are noise. Full table:
+`output/holdout_result.csv`; `output/holdout_LOCK` stops a re-run.
+
+Reading: the development result came from many choices made on the same data (Europe, volume bars, bar size,
+z lookback, stop, model) - the holdout says that combination did not generalise to 2025. The holdout is now spent;
+re-tuning on it would not be a test. This volume-bar setup is not a tradeable strategy as it stands.
+
+## Holdout - pre-registered 2026-11-03 (`holdout.py`)
 
 Fixed before any holdout result was seen: volume bars of 458, **z half-life 192** (`config.yaml`), trigger 1.645 /
 0.6745, clock-time labels (60 min, target 1 sigma_1h, stop 1.25x), spread with beans passive. The 17-feature
