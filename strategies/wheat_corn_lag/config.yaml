@@ -73,6 +73,39 @@ kalman_rule:
 kalman_grid:
   min_gap_cents: [0.0, 4.0, 6.0, 8.0]
 
+# The short-memory rule (2026-11-16, anchored_rule.py). Fair value moves with corn by the returns hedge ratio and is
+# pulled toward wheat at 1 / memory; z = gap / its typical size. Wheat outright, one-session hold, no other exit.
+# Selected BEFORE the run (trader, 2026-11-16): memory 2, entry z 1.0, z window 20. Pass rule fixed before the run:
+# every gate below AND walk-forward net cents per week >= the locked Kalman rule's over the same folds.
+# Adding this section changed the config hash (the locked rule's settings are untouched).
+anchored_rule:
+  memory_sessions: 1.5
+  beta_window_sessions: 20
+  z_window_sessions: 20
+  entry_z: 1.0
+  max_open: 2
+  hold_bars: 71
+  cost_ticks: 1.4
+  # 2026-11-16, second run (trader, after looking at the trade charts): exit when price is back at fair value,
+  # stop = the close of the entry's session. First run ("hold": the close 71 bars later) failed: runs/20261116-114441.
+  # Same selected params, same grid, same pass rule, all fixed before this run.
+  # Third look ("fair_value_only", no stop, runs/20261116_fair_value_only_pass): 92% of trades get back to fair value;
+  # those still open after 2 sessions lose; worst trade -50 c.
+  # PLANNED TEST (trader, 2026-11-16, fixed before the run): exit at fair value or after 2 sessions; after an entry
+  # the next one on that side needs z back at 0 first, or z 0.5 deeper than the last entry. Grid: adds on / off,
+  # time stop 2 / 3 sessions. Pass rule unchanged: the gates AND walk-forward net cents per week >= the locked rule's.
+  exits: fair_value_only
+  stop_sessions: 2
+  add_step: 0.5
+  # Planned test result (runs/20261116-122540_validation, memory 2): gates passed, +2.76 c net per trade, 1.2 a week.
+  # Sandbox on the memory (runs/20261116_memory_speed_sandbox): 1.5 sessions = same net per trade, ~a quarter more trades.
+  # THIS RUN (trader, 2026-11-16, fixed before the run): memory 1.5 is the baseline; is 1 session any better?
+  # Everything else and the pass rule unchanged.
+anchored_grid:
+  memory_sessions: [1.0, 1.5]
+# earlier grids: add_step [0.0, 0.5] x stop_sessions [2, 3]; before that memory_sessions [1, 2] x entry_z [1.0, 1.5]
+#   x z_window_sessions [10, 20]
+
 validation:
   n_folds: 6
   periods_per_year: 252          # one return per session

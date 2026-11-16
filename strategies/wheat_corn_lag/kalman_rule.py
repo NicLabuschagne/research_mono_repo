@@ -229,12 +229,17 @@ def book(bars: pd.DataFrame, s: pd.Series, rule: KalmanRuleConfig, gap: pd.Serie
     trades = cap_open(trades, rule.max_open)
     if trades.empty:
         return trades
+    return finish_trades(bars, trades, rule.cost_ticks)
+
+
+def finish_trades(bars: pd.DataFrame, trades: pd.DataFrame, cost_ticks: float) -> pd.DataFrame:
+    """Add the columns session_returns needs to a table of wheat-outright trades (entry, exit, side, move_c)."""
     trades = trades.rename(columns={"entry": "entry_bar", "exit": "exit_bar"}).reset_index(drop=True)
     open_price = bars["W_open"].values[trades["entry_bar"]]
     trades["entry_open_w"] = np.log(open_price)
     trades["entry_open_c"] = 0.0
     trades["hedge"] = 0.0
-    trades["cost"] = rule.cost_ticks * TICK_CENTS / open_price                  # log units
+    trades["cost"] = cost_ticks * TICK_CENTS / open_price                       # log units
     trades["exit_time"] = bars.index[trades["exit_bar"]]
     trades["exit_fill_log"] = np.log(open_price + trades["side"] * trades["move_c"])   # the close, or a limit / stop
     trades["ret"] = trades["side"] * (trades["exit_fill_log"] - trades["entry_open_w"]) - trades["cost"]
@@ -254,10 +259,12 @@ def make_kalman_evaluator(cfg, include_holdout: bool = False, end: pd.Timestamp 
         trades = book(bars, kalman_signal(features, rule), rule, gap)   # on ALL bars so thresholds are warm, then cut
         daily = session_returns(bars, trades)
         daily = daily[(daily.index >= start) & (daily.index < end)]
+        daily = daily.assign(ret=daily["ret"] * 100)         # percent of one contract's value: the tear sheet's unit
         if len(trades):
             exit_dates = trades["exit_time"].dt.normalize().dt.tz_localize(None)
             kept = trades[(exit_dates >= start) & (exit_dates < end)].copy()
             kept["exit_date"] = exit_dates[kept.index]
+            kept["ret"] *= 100
             daily.attrs["trades"] = kept
         return daily
 

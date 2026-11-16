@@ -40,6 +40,50 @@ fills on 15-min bars assume a full fill at the target level; costs at size are u
 Tested and NOT adopted (see the log): spread instead of outright; wait-for-the-turn and limit entries; stops in
 cents or ATR; 30% tails; no position limit.
 
+### Short-memory rule (2026-11-16): FAILED its pass rule, not adopted
+Question: can a fair value that sits ON price (trader's chart reading) replace the 20-session Kalman level gap?
+`anchored_rule.py`: fair value moves with corn by the 20-session returns hedge ratio and is pulled toward wheat with
+2 sessions of memory; z = gap / its 20-session RMS; enter when z crosses 1.0, wheat outright, one-session hold, no
+other exit, max 2 open. Grid: memory 1/2 x entry z 1.0/1.5 x z window 10/20. Pass rule fixed before the run: the
+gates AND walk-forward net cents per week >= the locked rule's on the same folds (`runs/20261116-114441_validation`).
+- Selected (2, 1.0, 20): mean fold Sharpe 0.26, 2 of 6 folds positive -> gates FAILED. Out of sample 2021-2025:
+  545 trades, +0.91 c net per trade, 53% win rate, 1.9 net cents a week.
+- Walk-forward picks (always entry z 1.5): 348 trades, +2.57 c net per trade (t 3.8), 1.35 a week = 3.5 net cents a
+  week vs the locked rule's 6.1 on the same folds -> FAILED. Best combo in sample: (2, 1.5, 20), mean fold Sharpe 1.20.
+- Second run, same day (trader's request after the trade charts): exit when a bar closes back at fair value (fill at
+  the next open), else at the close of the entry's session (`exits: fair_value`, `runs/20261116-120215_validation`).
+  WORSE: selected +0.37 c net per trade (was +0.91), walk-forward picks +1.00 c (was +2.57), 1.7 net cents a week.
+  Only 22% of trades get back to fair value inside the session (+8.5 c each); the 78% closed at the session end
+  lose 1.9 c each, and the average hold drops from a session to 7.6 hours. Both pass rules FAILED again.
+- Third look, same day (a pass, NOT a validation; `exits: fair_value_only`, charts in
+  `runs/20261116_fair_value_only_pass`): exit ONLY when price is back at fair value (else the last bar before a
+  possible roll). Memory 2, z window 20, out-of-sample folds 2021-2025: entry z 1.0 -> 381 trades, +3.27 c net per
+  trade (t 4.6), 69% win rate, 1.5 a week, 4.8 net cents a week; entry z 1.5 -> 211 trades, +5.11 c (t 5.4), 73%,
+  0.8 a week, 4.2 net cents a week. 92% of trades get back to fair value (median 1.2-1.5 sessions). Trades still open
+  after 2 sessions lose on average and there is no stop (worst trade -50 c). Third variant on the same data: a
+  hypothesis for a planned test, not a result.
+- PLANNED TEST, same day (`runs/20261116-122540_validation`; settings and pass rule fixed before the run): entry z 1.0,
+  exit at fair value or after 2 sessions, re-entry only after z is back at 0 or 0.5 deeper than the last entry, max 2
+  open. Grid: adds off / on x time stop 2 / 3 sessions. GATES PASSED (mean fold Sharpe 1.17, 5 of 6 folds positive,
+  walk-forward OOS Sharpe 1.25). Out of sample 2021-2025: 310 trades (1.2 a week), +2.76 c net per trade (t 3.7), 67%
+  win rate, average winner +9.7 c / loser -11.6 c; 2021 -1.01, 2022 +5.43, 2023 +3.02, 2024 +3.91, 2025 +1.79 c per
+  trade. Cents per week vs the locked rule FAILED (3.3 vs 6.1). 65% exit at fair value (+8.5 c), 31% at the time stop
+  (-8.5 c). The time stop does NOT cap the loss in cents: worst trade -55 c. Holdout B not run.
+- Sandboxes after the planned test (looks, not validations): no entries from 16:30 London to the close -> +3.7 c
+  net per trade but 0.9 a week (late signals are low quality whenever acted on; the gap does not build overnight);
+  fair-value memory 2 / 1.5 / 1 / 0.5 / 0.25 sessions -> more trades but less earned per cent of gap the faster it is.
+- BASELINE NOW memory 1.5 (trader, `runs/20261116-130533_validation`, grid memory 1 vs 1.5): GATES PASSED (mean fold
+  Sharpe 1.47, 5 of 6 folds positive, walk-forward OOS Sharpe 1.35). Out of sample 2021-2025: 396 trades (1.5 a week),
+  +2.80 c net per trade (t 4.7), 67% win rate, winner +9.0 c / loser -9.7 c, 4.3 net cents a week (locked rule 6.1:
+  that pass rule still FAILED), max drawdown -23% of one contract's value, worst trade -50 c. By year -1.31, +6.76,
+  +3.06, +3.23, +1.47 c. Memory 1 is NOT better: +1.71 c per trade, Sharpe 1.15 (though 6 of 6 folds positive).
+  Returns are now reported in PERCENT of one contract's value (the tear sheet's unit). Holdout B not run.
+- Findings on the way (development data): the Kalman level filter depends on where the price index starts (moving
+  the corn index's zero changes the K20 typical gap 27 -> 25-33 c); K20's level beta is 0.42 vs 0.75 from returns, and
+  over half of the locked rule's edge is corn itself rebounding; no lead-lag between corn and wheat at 15 minutes;
+  hedge-ratio and z windows of 10-40 sessions are a plateau; a "gap stuck on one side" filter is NOT supported.
+- Holdout B untouched. Config hash changed by the new config section (locked settings unchanged).
+
 Code (cleaned up 2026-11-02; model A and side research removed, recoverable from commit 0e42f9d):
 
 | file | what it is |
@@ -47,6 +91,8 @@ Code (cleaned up 2026-11-02; model A and side research removed, recoverable from
 | `config.yaml`, `strategy.py` | settings; data loading, roll segments (model A's settings stay so the config hash is unchanged) |
 | `features.py` | every feature, including the Kalman gap (kgap, kzr) |
 | `kalman_rule.py` | THE RULE: triggers, exits, book, walk-forward (`python -m ...kalman_rule`), holdout (`--holdout`) |
+| `forward.py` | forward (paper) tracking of the locked rule from 2026-11-03: pulls new LSE bars into `*_live.parquet`, re-runs, writes `runs/forward/`. Holdout B results stay unseen. Needs `LSE_API_KEY` and `pip install lse-data` |
+| `anchored_rule.py` | the short-memory rule tested 2026-11-16 (failed, not adopted): walk-forward, cents vs the locked rule, trade charts; `--forward` draws it on the live files |
 | `layer1.py` | Layer 1 evidence: IC, decay, which leg, gap sizing |
 | `hold_test.py`, `harvest.py`, `exits.py`, `entry_timing.py` | the Layer 2 studies behind each locked setting |
 | `leak_checks.py`, `data_checks.py` | look-ahead and data integrity checks |

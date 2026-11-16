@@ -83,6 +83,26 @@ class KalmanRuleConfig:
 
 
 @dataclass(frozen=True)
+class AnchoredRuleConfig:
+    """The short-memory rule (2026-11-16, anchored_rule.py): wheat outright on the anchored fair value's z."""
+    memory_sessions: float                 # how fast fair value is pulled back toward wheat (1.5 = 1.5 sessions)
+    beta_window_sessions: int              # hedge ratio: 15-minute returns of this many sessions before the bar
+    z_window_sessions: int                 # z = gap / its typical size (RMS around zero) over this many sessions
+    entry_z: float                         # buy when z rises through +entry_z, sell when it falls through -entry_z
+    max_open: int                          # positions open at once
+    hold_bars: int                         # exits "hold" only: bars held, 71 = one session
+    cost_ticks: float                      # round trip, a stress: keep it out of the grid
+    exits: str = "hold"                    # "hold": the close hold_bars later. "fair_value": when price is back at
+                                           # fair value (z at 0 or through it), else the close of the entry's session.
+                                           # "fair_value_only": the same with no session stop
+    stop_sessions: int = 0                 # fair-value exits: also out at the close this many sessions after entry
+                                           # (0 = no time stop)
+    add_step: float | None = None          # re-entry. None: re-arm when z leaves the entry zone (the first runs).
+                                           # A number: after an entry, the next one on that side needs z back at 0
+                                           # first, or z at least this much deeper than the last entry (0 = no adds)
+
+
+@dataclass(frozen=True)
 class FeatureConfig:
     lookbacks_bars: list[int]              # L, in 15-minute bars
     horizons_bars: list[int]               # h, in 15-minute bars
@@ -111,6 +131,8 @@ class Config:
     strategy: StrategyConfig
     kalman_rule: KalmanRuleConfig
     kalman_grid: dict[str, list]       # walk-forward grid for kalman_rule (validation.grid is model A's)
+    anchored_rule: AnchoredRuleConfig
+    anchored_grid: dict[str, list]     # walk-forward grid for anchored_rule
     validation: ValidationConfig
     gates: GateConfig
 
