@@ -1,4 +1,6 @@
 .venv/
+# secrets (API keys): never committed
+.env
 .idea/
 .junie/
 __pycache__/

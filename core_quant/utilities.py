@@ -134,7 +134,9 @@ def frame_summary(df: pd.DataFrame, n: int = 5) -> dict[str, Any]:
 
 
 ### data series from LSE
-# api key
+# api key: from the environment, or the project's .env (core_quant.config.load_env)
+from core_quant.config import load_env
+load_env()
 api_key = os.environ.get("LSE_API_KEY", "")
 client = LSE(api_key=api_key) if (LSE is not None and api_key) else None
 

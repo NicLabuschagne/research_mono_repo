@@ -83,6 +83,61 @@ gates AND walk-forward net cents per week >= the locked rule's on the same folds
   over half of the locked rule's edge is corn itself rebounding; no lead-lag between corn and wheat at 15 minutes;
   hedge-ratio and z windows of 10-40 sessions are a plateau; a "gap stuck on one side" filter is NOT supported.
 - Holdout B untouched. Config hash changed by the new config section (locked settings unchanged).
+- 2026-11-17, development looks (NOT validations; same data the settings were picked on), memory 1.5:
+  - Adding soybeans to the fair value adds nothing, for the Kalman K20 or the anchored version (gaps 97-98%
+    correlated with corn-only, IC no better, years split).
+  - Same period vs the locked rule (2021-01-21 to 2025-12-31, one contract per trade): locked 2.59 trades a week,
+    6.1 net c a week, Sharpe 1.85, max DD -183 c; anchored max 2 open 1.53, 4.3 c, 1.51, -167 c. Daily P&L
+    correlation 0.45.
+  - By entry within a move: z 1.0 -> +1.9 c (275 trades), z 1.5 -> +4.8 c (115), z 2.0 -> +7.0 c (39; blocked by max 2
+    open). Max 3 open: 1.67 a week, +3.15 c per trade, 5.3 net c a week, Sharpe 1.64, max DD -170 c.
+  - DECISION (trader): keep the anchored rule with max 3 open (config `anchored_rule.max_open: 3`) as the working
+    version. Reasons: its fair value sits close to price and does not stay away for days (reads naturally on the
+    chart); and the locked rule's re-arm fires again when the signal dips just under the level and comes back at
+    about the same price, which in practice is two positions at the same z. The anchored rule only adds when the
+    move is 0.5 z deeper. The locked rule stays locked.
+  - WALK-FORWARD max 2 vs 3 open (`runs/20261117-114551_validation`; pass rule fixed before the run in config.yaml):
+    PASSED. Gates pass (mean fold Sharpe 1.52, 5 of 6 folds positive, walk-forward OOS Sharpe 1.62). Picks (max 2 in
+    the 2021 fold, max 3 after): 424 trades, +3.13 c net per trade (t 5.3), 5.15 net c a week vs 4.30 for max 2;
+    max drawdown -166.9 c = max 2's exactly (a tie: the drawdown is in 2021, where the walk-forward picked max 2;
+    max 3 held throughout would be -169.8 c). Locked rule on the same folds: 6.06 c a week, -183 c.
+  - HOLDOUT B, run ONCE (`runs/20261117-115031_holdout_anchored`, `--holdout`; expectations in config.yaml written
+    before the run): 2026-07-01 to 2026-10-30, 31 trades (1.8 a week), -0.36 c net per trade (t -0.2), 58% wins,
+    winner +7.3 c / loser -11.0 c, -11 c in total, max DD -109 c. All five expectations met, but only just
+    (net per trade inside the -1 c warning line; win rate at the 58% floor). By month: Jul +3.6, Aug +6.2, Sep -1.2
+    (2 trades), Oct -7.3 c per trade (12 trades, -88 c): wheat fell 700 -> 600 c faster than corn implied and the
+    rule kept buying at z 1 / 1.5 / 2; 7 of those longs went to the 2-session time stop. Fair-value exits +5.3 c
+    (21 trades); time stops -12.8 c (9 trades). Holdout A (not clean for this rule): 41 trades, +1.75 c.
+    Holdout B is now SPENT, also as a clean test for the locked rule (its price action has been seen).
+  - PLANNED REGIME TEST (Layer 1, trader 2026-11-17; written BEFORE the run). Development data only. Signal = the
+    anchored z (memory 1.5) on the tradable bars; target = wheat's move over the next session (fwd_71); Spearman IC.
+    Two regime measures, each from bars BEFORE t only, no fitted thresholds:
+      R1 slow fair value: does the K20 Kalman gap point the same way as z (both say wheat cheap / both rich)?
+         Groups: agree / disagree. No direction assumed: "good" = the group with the higher IC overall.
+      R2 variance ratio of the hedged wheat series (own) over the previous 20 sessions, 1-session changes vs
+         15-minute changes: VR < 1 = mean-reverting ("good", assumed), VR >= 1 = trending.
+    PASS (each measure on its own): IC(good) - IC(bad) >= 0.05 over the whole period, AND the same sign in at least
+    5 of the 6 years 2020-2025, AND the bad group holds at least 20% of the bars. Trade-level splits of the validated
+    trades are descriptive only. A pass allows a rule test (walk-forward); it is not a rule change.
+    RESULT (`regime_test.py`): R1 PASSED: IC agree 0.155 vs disagree -0.031 (difference 0.186), agree higher in 5 of 6
+    years, disagree 34% of bars. The exception is 2021 (agree -0.005, disagree +0.109), the losing year.
+    Trades (descriptive): agree 359 trades +3.29 c, disagree 136 trades +2.03 c, so the disagree trades still made
+    money. R2 FAILED: VR < 1 on 88% of bars (VR >= 1 too rare, 12%), and the difference has the expected sign in only
+    2 of 6 years.
+  - SIZING TEST of R1 (`runs/20261117-130749_validation`, pass rule in config.yaml): skip adds when the slow K20 gap
+    disagrees with z. PASSED on paper, NO real effect: the walk-forward kept the adds in 4 of 5 folds; 5.30 vs 5.28 net
+    c a week, the same -170 c drawdown. Not adopted (disagree_adds stays true). By regime x entry (current rule, OOS
+    2021-2025): agree 1st/2nd/3rd = +1.8 / +5.5 / +8.3 c (183 / 90 / 40 trades); disagree = +2.2 / +2.3 / -25.2 c
+    (92 / 25 / 2 trades). The deeper-is-better ladder only holds when the slow fair value agrees; against it, an add
+    earns no more than a first entry (still positive), and a 3rd entry against it is rare (2 trades, both time stops).
+  - ROLL LOOK (2026-11-17, development, not a validation): can the ~51% of time excluded around rolls be traded?
+    Wheat roll day estimated from the overnight price jump corn does not explain (checked on corn's exact switches:
+    right 17 of 27, 12 of 14 when the jump is >= 2x the next largest; wheat 2023+ unmistakable, 11-25 c jumps 5-8
+    sessions before FND; 2020-22 often unclear). One cut per roll + no model-A warm-up -> 100% of time tradable,
+    trades 1.67 -> 3.34 a week, BUT the 452 recovered trades lose -2.74 c each (every year negative): -4.0 c inside
+    the FND window, -1.6 c in the weeks after it, -1.2 c even away from unclear rolls. The exclusion protects the
+    rule: keep it. (Likely reasons: expiring-contract trading and the legs on different delivery months - corn's
+    file skips Sep - plus the 20-session scales still holding roll-period moves.)
 
 Code (cleaned up 2026-11-02; model A and side research removed, recoverable from commit 0e42f9d):
 
@@ -92,6 +147,7 @@ Code (cleaned up 2026-11-02; model A and side research removed, recoverable from
 | `features.py` | every feature, including the Kalman gap (kgap, kzr) |
 | `kalman_rule.py` | THE RULE: triggers, exits, book, walk-forward (`python -m ...kalman_rule`), holdout (`--holdout`) |
 | `forward.py` | forward (paper) tracking of the locked rule from 2026-11-03: pulls new LSE bars into `*_live.parquet`, re-runs, writes `runs/forward/`. Holdout B results stay unseen. Needs `LSE_API_KEY` and `pip install lse-data` |
+| `live/engine.py`, `live/dashboard.py` | live paper dashboard (2026-11-17): `python -m strategies.wheat_corn_lag.live.dashboard`. Polls LSE every 15 min (key in the project's `.env`, ignored by git), re-runs the anchored rule (working version) and the locked rule from scratch, writes `runs/live/` (state.json, events.jsonl, my_actions.jsonl, equity.png). `engine --check`: the live files give the validated trades. Paper only |
 | `anchored_rule.py` | the short-memory rule tested 2026-11-16 (failed, not adopted): walk-forward, cents vs the locked rule, trade charts; `--forward` draws it on the live files |
 | `layer1.py` | Layer 1 evidence: IC, decay, which leg, gap sizing |
 | `hold_test.py`, `harvest.py`, `exits.py`, `entry_timing.py` | the Layer 2 studies behind each locked setting |

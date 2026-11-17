@@ -83,7 +83,7 @@ anchored_rule:
   beta_window_sessions: 20
   z_window_sessions: 20
   entry_z: 1.0
-  max_open: 2
+  max_open: 3                    # 2026-11-17 trader: keep the third entry at z 2.0 (was 2; development look, not validated)
   hold_bars: 71
   cost_ticks: 1.4
   # 2026-11-16, second run (trader, after looking at the trade charts): exit when price is back at fair value,
@@ -101,9 +101,32 @@ anchored_rule:
   # Sandbox on the memory (runs/20261116_memory_speed_sandbox): 1.5 sessions = same net per trade, ~a quarter more trades.
   # THIS RUN (trader, 2026-11-16, fixed before the run): memory 1.5 is the baseline; is 1 session any better?
   # Everything else and the pass rule unchanged.
+  # THIS RUN (trader, 2026-11-17, fixed before the run): memory 1.5 kept; is max 3 open (third entry at z 2.0)
+  # better than max 2? Grid max_open 2 / 3. PASS RULE: gates pass AND, over the out-of-sample folds, the walk-forward
+  # picks earn MORE net cents a week than max 2 open AND their max drawdown (cents, closed trades, 1 contract per
+  # trade) is no worse than max 2 open's. The locked rule is shown for reference only.
+  # RESULT runs/20261117-114551_validation: PASSED (max_open 3 selected).
+  # HOLDOUT (trader, 2026-11-17; written before the run, `python -m strategies.wheat_corn_lag.anchored_rule --holdout`):
+  # judged on holdout B = 2026-07-01 to the end of the data (2026-10-30), run ONCE, settings exactly as above, no
+  # stop changes. Holdout A (Jan-Jun 2026) is shown next to it but is not clean for this rule (its locked-rule
+  # result was seen before this rule was designed). Trades still open at the end of the data are left out.
+  # Expectations from the walk-forward picks (1.64 a week, +3.13 c net per trade, 68% wins, 74% exit at fair value;
+  # folds -0.5 to +7.7 c): about 28 trades in B ->
+  #   trades 15-45 | net per trade not below -1 c (warning line) | net per trade in the fold band -1..+7.7 c |
+  #   win rate 58-78% (descriptive) | 60-85% exit at fair value (descriptive)
+  # RESULT holdout B (runs/20261117-115031_holdout_anchored): -0.36 c net per trade, expectations met only just.
+  # SIZING TEST (trader, 2026-11-17, fixed BEFORE the run; follows the R1 regime pass in regime_test.py):
+  # disagree_adds false = when the 20-session Kalman gap points the other way from z at an add's signal bar, skip
+  # that add (first entries always taken). Grid disagree_adds true / false. PASS RULE: gates pass AND, over the
+  # out-of-sample folds, the walk-forward picks earn at least as many net cents a week as the current rule
+  # (disagree_adds true) AND their max drawdown (cents, closed trades, 1 contract per trade) is no worse.
+  # Descriptive next to it: the current rule's trades by entry (z 1 / 1.5 / 2) x agree / disagree.
+  # RESULT runs/20261117-130749_validation: PASSED on paper but no real effect: the walk-forward picked true in 4 of 5
+  # folds; picks 5.30 vs current 5.28 net c a week, same drawdown. Kept true (unchanged).
+  disagree_adds: true
 anchored_grid:
-  memory_sessions: [1.0, 1.5]
-# earlier grids: add_step [0.0, 0.5] x stop_sessions [2, 3]; before that memory_sessions [1, 2] x entry_z [1.0, 1.5]
+  disagree_adds: [true, false]
+# earlier grids: max_open [2, 3] (runs/20261117-114551); memory_sessions [1.0, 1.5] (runs/20261116-130533); add_step [0.0, 0.5] x stop_sessions [2, 3]; before that memory_sessions [1, 2] x entry_z [1.0, 1.5]
 #   x z_window_sessions [10, 20]
 
 validation:

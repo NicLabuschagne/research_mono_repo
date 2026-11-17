@@ -8,3 +8,5 @@ scipy
 pyarrow
 pyyaml
 pytest
+textual==0.86.3     # live dashboard (strategies/wheat_corn_lag/live)
+lse-data            # London Strategic Edge price API (live bars)

@@ -100,6 +100,8 @@ class AnchoredRuleConfig:
     add_step: float | None = None          # re-entry. None: re-arm when z leaves the entry zone (the first runs).
                                            # A number: after an entry, the next one on that side needs z back at 0
                                            # first, or z at least this much deeper than the last entry (0 = no adds)
+    disagree_adds: bool = True             # False: skip an add (z 1.5, 2.0 ...) when the slow 20-session Kalman gap
+                                           # points the other way from z at its signal bar (regime_test.py, R1)
 
 
 @dataclass(frozen=True)

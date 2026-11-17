@@ -61,11 +61,13 @@ def anchored_signal(gap: pd.Series, rule: AnchoredRuleConfig, tradable: pd.Serie
     return (-gap / lagged_rms(gap, rule.z_window_sessions * BARS_PER_SESSION)).where(tradable)
 
 
-def ladder_triggers(z: np.ndarray, entry_z: float, add_step: float, segment: np.ndarray) -> list[tuple[int, int]]:
-    """(bar, side). First entry of a divergence when z reaches entry_z; another only when z is add_step deeper than
-    the last entry (add_step 0: none). A side starts afresh when z is back at 0 or beyond, and after a possible roll."""
+def ladder_triggers(z: np.ndarray, entry_z: float, add_step: float, segment: np.ndarray) -> list[tuple[int, int, int]]:
+    """(bar, side, rung). First entry of a divergence when z reaches entry_z (rung 1); another only when z is add_step
+    deeper than the last entry (rung 2, 3, ...; add_step 0: none). A side starts afresh when z is back at 0 or
+    beyond, and after a possible roll."""
     events = []
     last_long = last_short = None                     # z at the last entry of the current divergence, per side
+    rung_long = rung_short = 0
     for t in range(len(z)):
         if t > 0 and segment[t] != segment[t - 1]:
             last_long = last_short = None
@@ -76,10 +78,12 @@ def ladder_triggers(z: np.ndarray, entry_z: float, add_step: float, segment: np.
         if z[t] >= 0:
             last_short = None
         if z[t] >= entry_z and (last_long is None or (add_step > 0 and z[t] >= last_long + add_step)):
-            events.append((t, 1))
+            rung_long = 1 if last_long is None else rung_long + 1
+            events.append((t, 1, rung_long))
             last_long = z[t]
         if z[t] <= -entry_z and (last_short is None or (add_step > 0 and z[t] <= last_short - add_step)):
-            events.append((t, -1))
+            rung_short = 1 if last_short is None else rung_short + 1
+            events.append((t, -1, rung_short))
             last_short = z[t]
     return events
 
@@ -116,12 +120,21 @@ def fair_value_exits(bars: pd.DataFrame, events: list[tuple[int, int]], z: np.nd
     return pd.DataFrame(rows)
 
 
-def anchored_book(bars: pd.DataFrame, z: pd.Series, rule: AnchoredRuleConfig) -> pd.DataFrame:
+def anchored_book(bars: pd.DataFrame, z: pd.Series, rule: AnchoredRuleConfig, slow: pd.Series | None = None) -> pd.DataFrame:
+    """slow: the slow fair value's signal (-kgap_20s, + = wheat cheap). Needed for disagree_adds False, and to label
+    every trade agree / disagree; without it all trades count as agree."""
     level = np.full(len(z), rule.entry_z)
+    labels = {}                                        # (signal bar, side) -> (rung, slow disagrees)
     if rule.add_step is None:
         events = tail_triggers(z.values, level, -level, bars["segment"].values)
     else:
-        events = ladder_triggers(z.values, rule.entry_z, rule.add_step, bars["segment"].values)
+        disagree = np.zeros(len(z), dtype=bool) if slow is None else (np.sign(slow.values) == -np.sign(z.values))
+        events = []
+        for t, side, rung in ladder_triggers(z.values, rule.entry_z, rule.add_step, bars["segment"].values):
+            labels[(t, side)] = (rung, bool(disagree[t]))
+            if rung >= 2 and disagree[t] and not rule.disagree_adds:
+                continue                                # an add against the slow fair value: skipped
+            events.append((t, side))
     if rule.exits in ("fair_value", "fair_value_only"):
         trades = fair_value_exits(bars, events, z.values, session_stop=rule.exits == "fair_value",
                                   stop_bars=rule.stop_sessions * BARS_PER_SESSION)
@@ -130,15 +143,24 @@ def anchored_book(bars: pd.DataFrame, z: pd.Series, rule: AnchoredRuleConfig) ->
         trades["exit_reason"] = "time"
     if trades.empty:
         return trades
+    if labels:
+        signal_bar = trades["entry"].values - 1
+        trades["rung"] = [labels[(t, side)][0] for t, side in zip(signal_bar, trades["side"])]
+        trades["disagree"] = [labels[(t, side)][1] for t, side in zip(signal_bar, trades["side"])]
     return finish_trades(bars, cap_open(trades, rule.max_open), rule.cost_ticks)
 
 
-def make_anchored_evaluator(cfg, bars: pd.DataFrame, tradable: pd.Series):
+def slow_signal(cfg, features: pd.DataFrame) -> pd.Series:
+    """The locked rule's 20-session Kalman gap as a signal: + = wheat cheap vs the slow fair value (live, known at t)."""
+    return -features[f"kgap_{cfg.kalman_rule.memory_sessions}s"]
+
+
+def make_anchored_evaluator(cfg, bars: pd.DataFrame, tradable: pd.Series, slow: pd.Series | None = None):
     """evaluate(params, start, end) for the walk-forward engine, on bars already loaded."""
     def evaluate(params: dict, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
         rule = replace(cfg.anchored_rule, **params)
         z = anchored_signal(anchored_gap(bars, rule), rule, tradable)
-        trades = anchored_book(bars, z, rule)                     # on ALL bars, then cut
+        trades = anchored_book(bars, z, rule, slow)               # on ALL bars, then cut
         daily = session_returns(bars, trades)
         daily = daily[(daily.index >= start) & (daily.index < end)]
         daily = daily.assign(ret=daily["ret"] * 100)         # percent of one contract's value: the tear sheet's unit
@@ -220,7 +242,7 @@ def forward_chart(cfg, name: str = "anchored_trades_forward") -> None:
     rule = cfg.anchored_rule
     gap = anchored_gap(bars, rule)
     z = anchored_signal(gap, rule, kalman_signal(features, cfg.kalman_rule).notna())
-    trades = anchored_book(bars, z, rule)
+    trades = anchored_book(bars, z, rule, slow_signal(cfg, features))
     first = int(np.searchsorted(bars.index, pd.Timestamp("2026-11-02", tz="UTC")))
     trades = trades[trades["entry_bar"] >= first]
     path = STRATEGY_DIR / "runs" / "forward" / f"{name}.png"
@@ -228,14 +250,101 @@ def forward_chart(cfg, name: str = "anchored_trades_forward") -> None:
     print(f"{len(trades)} trades from 2026-11-02 (a look, not evidence). Chart: {path}")
 
 
+BASELINE = {"disagree_adds": True}     # the pass rule's yardstick: the rule before this test
+HOLDOUT_B = ("2026-07-01", "2026-10-31")       # to the end of the data file (last bar 2026-10-30)
+
+
+def holdout(cfg) -> None:
+    """Holdout B, ONCE, for the selected rule (judged there); holdout A shown beside it (not clean for this rule).
+    Refuses unless the latest validation is for exactly this config and passed, and refuses a second run."""
+    from core_quant.config import latest_run, save_run
+    from core_quant.walk_forward import config_hash
+    engine = engine_cfg(cfg)
+    last = latest_run(STRATEGY_DIR, "validation")
+    if last is None or last[1]["config_hash"] != config_hash(engine) or not last[1]["gates_passed"]:
+        raise RuntimeError("the latest validation is not a passing run of this exact config")
+    previous = latest_run(STRATEGY_DIR, "holdout_anchored")
+    if previous:
+        raise RuntimeError(f"holdout already run for this rule in {previous[0].name}")
+
+    rule = cfg.anchored_rule
+    cost = rule.cost_ticks * TICK_CENTS
+    _, _, bars, features = make_kalman_evaluator(cfg, include_holdout=True)      # every bar to the end of the data
+    tradable = kalman_signal(features, cfg.kalman_rule).notna()
+    gap = anchored_gap(bars, rule)
+    z = anchored_signal(gap, rule, tradable)
+    trades = anchored_book(bars, z, rule, slow_signal(cfg, features))             # on ALL bars, so everything is warm
+    trades = trades[trades["exit_bar"] < len(bars) - 1]                           # still open at the end: left out
+    signal_time = bars.index[trades["entry_bar"].values - 1]
+
+    periods = {"B (judged)": HOLDOUT_B, "A (not clean)": (f"{cfg.split.holdout_start:%Y-%m-%d}", f"{cfg.split.holdout_end:%Y-%m-%d}")}
+    rows, parts = [], {}
+    for name, (start, end) in periods.items():
+        inside = (signal_time >= pd.Timestamp(start, tz="UTC")) & (signal_time < pd.Timestamp(end, tz="UTC"))
+        part = trades[inside]
+        parts[name] = part
+        net = (part["move_c"] - cost).values
+        equity = np.cumsum(net)
+        weeks = (pd.Timestamp(end) - pd.Timestamp(start)).days / 7
+        rows.append({"period": f"{name} {start}..{end}", **cents_row(part, cost), "per_week": len(part) / weeks,
+                     "net_c_total": net.sum(), "max_dd_c": (equity - np.maximum.accumulate(np.r_[0, equity])[1:]).min(),
+                     "share_at_fair_value": (part["exit_reason"] == "fair value").mean(),
+                     "share_time_stop": (part["exit_reason"] == "time").mean()})
+    table = pd.DataFrame(rows)
+
+    b = table.iloc[0]
+    checks = [("trades 15-45", 15 <= b["trades"] <= 45, b["trades"]),
+              ("net per trade not below -1 c (warning line)", b["net_per_trade_c"] >= -1, b["net_per_trade_c"]),
+              ("net per trade in the fold band -1..+7.7 c", -1 <= b["net_per_trade_c"] <= 7.7, b["net_per_trade_c"]),
+              ("win rate 58-78% (descriptive)", 0.58 <= b["hit_rate"] <= 0.78, b["hit_rate"]),
+              ("60-85% exit at fair value (descriptive)", 0.60 <= b["share_at_fair_value"] <= 0.85, b["share_at_fair_value"])]
+
+    part_b = parts["B (judged)"]
+    b_time = pd.Series(bars.index[part_b["entry_bar"].values - 1], index=part_b.index)
+    by = {"by month (signal)": b_time.dt.strftime("%Y-%m"), "by side": part_b["side"].map({1: "long", -1: "short"}),
+          "by exit": part_b["exit_reason"]}
+    pd.set_option("display.width", 250)
+    print(f"\n== HOLDOUT, anchored rule as validated (memory {rule.memory_sessions}, max {rule.max_open} open), cents,"
+          f" cost {cost:.2f} c round trip. net per trade = all trades after costs")
+    print(table.round(2).to_string(index=False))
+    print("\n== holdout B against the expectations written before the run")
+    for name, ok, value in checks:
+        print(f"  {'OK  ' if ok else 'NOT '} {name}: {value:.2f}")
+    for title, groups in by.items():
+        print(f"\n-- holdout B, {title}")
+        print(pd.DataFrame([{"group": key, **cents_row(group, cost)} for key, group in part_b.groupby(groups)]).round(2).to_string(index=False))
+
+    metrics = {"config_hash": config_hash(engine), "validation_run": last[0].name, "holdout_B": HOLDOUT_B,
+               "summary": table.to_dict("records"), "checks": [(name, bool(ok), float(value)) for name, ok, value in checks]}
+    figure, axis = plt.subplots(figsize=(12, 4.5))
+    for name, part in parts.items():
+        axis.plot(bars.index[part["exit_bar"].values], (part["move_c"] - cost).cumsum().values, marker="o", ms=3,
+                  label=f"{name}: {len(part)} trades, {(part['move_c'] - cost).mean():+.2f} c net per trade")
+    axis.axhline(0, color="grey", lw=0.8)
+    axis.set_ylabel("cumulative net cents, 1 contract per trade")
+    axis.set_title("Anchored rule, holdout: cumulative net cents", loc="left")
+    axis.legend()
+    figure.tight_layout()
+    run_dir = save_run(STRATEGY_DIR, "holdout_anchored", engine, metrics, tables={"summary": table, "trades_B": part_b},
+                       figures={"cents_equity": figure})
+    month_starts = pd.date_range(HOLDOUT_B[0], HOLDOUT_B[1], freq="MS")
+    for start, end in zip(month_starts, list(month_starts[1:]) + [pd.Timestamp(HOLDOUT_B[1])]):
+        trade_chart(bars, gap, z, part_b, rule, cost, f"{start:%Y-%m-%d}", f"{end:%Y-%m-%d}",
+                    run_dir / f"trades_B_{start:%Y-%m}.png")
+    print(f"\nSaved {run_dir} (summary, trades, equity chart, one trade chart per month of B)")
+
+
 if __name__ == "__main__":
     cfg = load()
     if "--forward" in sys.argv:
         forward_chart(cfg)
         sys.exit()
+    if "--holdout" in sys.argv:
+        holdout(cfg)
+        sys.exit()
     locked_evaluate, trading_dates, bars, features = make_kalman_evaluator(cfg)        # development data only
     tradable = kalman_signal(features, cfg.kalman_rule).notna()
-    evaluate = make_anchored_evaluator(cfg, bars, tradable)
+    evaluate = make_anchored_evaluator(cfg, bars, tradable, slow_signal(cfg, features))
     rule = cfg.anchored_rule
     cost_cents = rule.cost_ticks * TICK_CENTS
     development_start, holdout_start = pd.Timestamp(cfg.split.development_start), pd.Timestamp(cfg.split.holdout_start)
@@ -279,14 +388,21 @@ if __name__ == "__main__":
     locked_trades = locked_evaluate({}, starts[1], holdout_start).attrs["trades"]
     locked_cost = cfg.kalman_rule.cost_ticks * TICK_CENTS
     selected_oos = evaluate({}, starts[1], holdout_start).attrs["trades"]
-    compare = pd.DataFrame([
-        {"rule": "anchored, walk-forward picks", **cents_row(oos_trades, cost_cents)},
-        {"rule": "anchored, selected params", **cents_row(selected_oos, cost_cents)},
-        {"rule": "locked Kalman rule", **cents_row(locked_trades, locked_cost)}])
+    baseline_oos = evaluate(BASELINE, starts[1], holdout_start).attrs["trades"]         # the pass rule's yardstick
+
+    def max_drawdown_cents(trades: pd.DataFrame, cost: float) -> float:
+        """Deepest fall of the running total of net cents (closed trades by exit time, 1 contract per trade)."""
+        equity = (trades.sort_values("exit_time")["move_c"] - cost).cumsum()
+        return (equity - equity.cummax()).min()
+
+    rules = [("anchored, walk-forward picks", oos_trades, cost_cents), ("anchored, selected params", selected_oos, cost_cents),
+             (f"anchored, current rule {BASELINE}", baseline_oos, cost_cents), ("locked Kalman rule", locked_trades, locked_cost)]
+    compare = pd.DataFrame([{"rule": name, **cents_row(t, c)} for name, t, c in rules])
     compare["per_week"] = compare["trades"] / oos_weeks
-    compare["worst_trade_c"] = [(t["move_c"] - c).min() for t, c in ((oos_trades, cost_cents), (selected_oos, cost_cents), (locked_trades, locked_cost))]
-    compare["hours_held"] = [(t["exit_bar"] - t["entry_bar"] + 1).mean() / 4 for t in (oos_trades, selected_oos, locked_trades)]
-    compare["share_at_fair_value"] = [(t["exit_reason"] == "fair value").mean() for t in (oos_trades, selected_oos, locked_trades)]
+    compare["worst_trade_c"] = [(t["move_c"] - c).min() for _, t, c in rules]
+    compare["max_dd_c"] = [max_drawdown_cents(t, c) for _, t, c in rules]
+    compare["hours_held"] = [(t["exit_bar"] - t["entry_bar"] + 1).mean() / 4 for _, t, _ in rules]
+    compare["share_at_fair_value"] = [(t["exit_reason"] == "fair value").mean() for _, t, _ in rules]
     compare["net_cents_per_week"] = compare["net_per_trade_c"] * compare["per_week"]
 
     # every combo over the whole development period (in sample)
@@ -309,10 +425,27 @@ if __name__ == "__main__":
     print(f"\n== in CENTS (cost {cost_cents:.2f} c round trip). net per trade = all trades after costs; average winner /"
           f" loser = the winning / losing trades only")
     print(table.round(2).to_string(index=False))
-    print(f"\n== PASS RULE: out-of-sample folds {starts[1]:%Y-%m-%d} to {holdout_start:%Y-%m-%d}, net cents per week vs the locked rule")
+    print(f"\n== PASS RULE: out-of-sample folds {starts[1]:%Y-%m-%d} to {holdout_start:%Y-%m-%d}, walk-forward picks vs the current rule {BASELINE}")
     print(compare.round(2).to_string(index=False))
-    more = compare["net_cents_per_week"].iloc[0] >= compare["net_cents_per_week"].iloc[2]
-    print(f"walk-forward net cents per week >= locked: {'PASSED' if more else 'FAILED'}")
+    picks, current = compare.iloc[0], compare.iloc[2]
+    checks = [("gates", result["metrics"]["gates_passed"]),
+              ("net cents per week >= the current rule", picks["net_cents_per_week"] >= current["net_cents_per_week"]),
+              ("max drawdown no worse than the current rule", picks["max_dd_c"] >= current["max_dd_c"])]
+    for name, ok in checks:
+        print(f"  {'PASSED' if ok else 'FAILED'}  {name}")
+    print(f"PASS RULE: {'PASSED' if all(ok for _, ok in checks) else 'FAILED'}")
+
+    # descriptive: the current rule's trades by entry (rung 1 = z 1.0, 2 = z 1.5, 3 = z 2.0) and slow agree / disagree
+    if "rung" in baseline_oos:
+        regime = baseline_oos["disagree"].map({False: "agree", True: "disagree"})
+        entry = baseline_oos["rung"].clip(upper=3).map({1: "1st (z 1.0)", 2: "2nd (z 1.5)", 3: "3rd (z 2.0+)"})
+        split = pd.DataFrame([{"slow fair value": key[0], "entry": key[1], **cents_row(part, cost_cents),
+                               "share time stop": (part["exit_reason"] == "time").mean(),
+                               "net c total": (part["move_c"] - cost_cents).sum()}
+                              for key, part in baseline_oos.groupby([regime, entry])])
+        print(f"\n== the current rule's trades, out-of-sample folds, by slow fair value x entry (descriptive)")
+        print(split.round(2).to_string(index=False))
+        split.to_csv(run_dir / "trades_by_regime_and_entry.csv", index=False)
     print("\n== every combo, whole development period (in sample)")
     print(combos.round(2).to_string(index=False))
     for title, groups in [("by year (exit)", selected_oos["exit_time"].dt.year),

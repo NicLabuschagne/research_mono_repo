@@ -26,6 +26,20 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def load_env(path: Path = ROOT / ".env") -> None:
+    """Put KEY=value lines from the project's .env (ignored by git) into os.environ.
+    A variable already set in the environment wins. No .env file: nothing happens."""
+    import os
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        os.environ.setdefault(name.strip(), value.strip().strip('"').strip("'"))
+
+
 # ── Sections every strategy shares ─────────────────────────────────────────────
 
 @dataclass(frozen=True)

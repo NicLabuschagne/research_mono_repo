@@ -81,6 +81,8 @@ def update_leg(client, symbol: str, locked_file: str, live_file: str, bar_minute
 
 def fetch(cfg) -> None:
     from lse import LSE                    # imported here so --no-fetch works without the SDK or a key
+    from core_quant.config import load_env
+    load_env()                             # the key lives in the project's .env (ignored by git)
     key = os.environ.get("LSE_API_KEY")
     if not key:
         raise SystemExit("LSE_API_KEY is not set (or use --no-fetch)")
