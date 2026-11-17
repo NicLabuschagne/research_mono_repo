@@ -130,7 +130,7 @@ def locked_state(cfg, evaluate, bars, features) -> dict:
     state = {"signal_s": float(s.iloc[-1]), "long_above": float(window.quantile(1 - rule.tail)),
              "short_below": float(window.quantile(rule.tail)),
              "gap_c": float(features[f"kgap_{rule.memory_sessions}s"].iloc[-1] * bars["W"].iloc[-1]),
-             "open": 0, "trades": 0, "net_per_trade_c": np.nan, "net_c_total": 0.0}
+             "open": 0, "trades": 0, "net_per_trade_c": np.nan, "net_c_total": 0.0, "history": []}
     if len(trades):
         last = len(bars) - 1
         still_open = ((trades["exit_bar"] == last) & (trades["exit_reason"] == "time")
@@ -139,7 +139,60 @@ def locked_state(cfg, evaluate, bars, features) -> dict:
         net = closed["move_c"] - cost
         state.update({"open": int(still_open.sum()), "trades": int(len(closed)),
                       "net_per_trade_c": float(net.mean()) if len(net) else np.nan, "net_c_total": float(net.sum())})
+        state["history"] = [{"entry_time": str(bars.index[t.entry_bar]), "side": "long" if t.side > 0 else "short",
+                             "entry_number": 1, "entry_price": float(bars["W_open"].values[t.entry_bar]),
+                             "exit_time": "" if is_open else str(t.exit_time),
+                             "exit_reason": "open" if is_open else t.exit_reason, "net_c": float(t.move_c - cost)}
+                            for t, is_open in zip(trades.itertuples(), still_open)]
     return state
+
+
+# ---- the forward track record: append-only, never rewritten
+LEDGER_FILE = STRATEGY_DIR / "forward_ledger" / "trades.csv"     # NOT under runs/: tracked by git, commit it
+LEDGER_COLUMNS = ["event", "rule", "entry_time", "side", "entry_number", "entry_price", "exit_time", "exit_reason",
+                  "net_c", "first_seen_utc", "seen_live", "config_hash", "git_commit"]
+LIVE_WINDOW = pd.Timedelta(minutes=45)    # seen within 45 min of the bar that caused it = seen live, not rebuilt later
+
+
+def update_ledger(cfg, state: dict) -> list[str]:
+    """Write each trade's opening and closing ONCE, the first time the engine sees it, with the code version.
+    Earlier lines are never changed. If a recompute later disagrees with the ledger (a revised bar, a code change),
+    that is reported as an event; the ledger keeps what was seen at the time."""
+    from core_quant.config import git_state
+    from core_quant.walk_forward import config_hash
+    from strategies.wheat_corn_lag.anchored_rule import engine_cfg
+
+    LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ledger = pd.read_csv(LEDGER_FILE, dtype=str) if LEDGER_FILE.exists() else pd.DataFrame(columns=LEDGER_COLUMNS)
+    key = lambda row: f"{row['rule']}|{row['entry_time']}|{row['side']}|{row['entry_number']}"
+    opened = {key(row) for _, row in ledger[ledger["event"] == "opened"].iterrows()}
+    closed = {key(row): row for _, row in ledger[ledger["event"] == "closed"].iterrows()}
+    now = now_utc().floor("s")
+    # the code version: commit + the hash of every rule setting (the ledger itself always makes the tree "dirty")
+    version = {"config_hash": config_hash(engine_cfg(cfg)), "git_commit": git_state()["commit"]}
+
+    new_lines, events, current = [], [], set()
+    for rule_name, trades in [("anchored", state["anchored"]["history"]), ("locked", state["locked"]["history"])]:
+        for trade in trades:
+            row = {"rule": rule_name, **{name: trade[name] for name in ["entry_time", "side", "entry_number", "entry_price"]}}
+            row["entry_number"] = str(row["entry_number"])
+            k = key(row)
+            current.add(k)
+            if k not in opened:
+                live = now - pd.Timestamp(trade["entry_time"]) <= LIVE_WINDOW
+                new_lines.append({**row, "event": "opened", "first_seen_utc": str(now), "seen_live": live, **version})
+            if trade["exit_time"] and k not in closed:
+                live = now - pd.Timestamp(trade["exit_time"]) <= LIVE_WINDOW
+                new_lines.append({**row, "event": "closed", "exit_time": trade["exit_time"], "exit_reason": trade["exit_reason"],
+                                  "net_c": round(trade["net_c"], 2), "first_seen_utc": str(now), "seen_live": live, **version})
+            elif k in closed and abs(float(closed[k]["net_c"]) - trade["net_c"]) > 0.5:
+                events.append(f"LEDGER CHECK {rule_name} {row['entry_time'][5:16]}: recompute {trade['net_c']:+.1f} c, "
+                              f"ledger {float(closed[k]['net_c']):+.1f} c (ledger kept)")
+    for k in opened - current:
+        events.append(f"LEDGER CHECK {k}: in the ledger, no longer produced by the rule (ledger kept)")
+    if new_lines:
+        pd.DataFrame(new_lines, columns=LEDGER_COLUMNS).to_csv(LEDGER_FILE, mode="a", header=not LEDGER_FILE.exists(), index=False)
+    return events
 
 
 def events_between(old: dict | None, new: dict) -> list[str]:
@@ -206,7 +259,7 @@ def update(fetch_new: bool = True) -> dict:
              "anchored": anchored_state(cfg, bars, features), "locked": locked_state(cfg, evaluate, bars, features)}
     old = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else None
     revised = [line for line in state["fetch_log"] if "revised" in line and " 0 closes revised" not in line]
-    append_events(events_between(old, state) + revised)
+    append_events(events_between(old, state) + revised + update_ledger(cfg, state))
     STATE_FILE.write_text(json.dumps(state, indent=1, default=str).replace("NaN", "null"))
     equity_chart(state)
     return state
