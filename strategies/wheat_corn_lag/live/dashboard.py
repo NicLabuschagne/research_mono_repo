@@ -9,7 +9,7 @@ It shows runs/live/state.json at once, then polls LSE through engine.update() in
 and every POLL_MINUTES (bars are 15 minutes; a short delay is fine for a monitoring screen). Closing the screen
 loses nothing: the engine writes everything to runs/live/.
 
-Keys:  r refresh now · l log what I would do · t open the equity chart · 1-4 tabs · q quit
+Keys:  r refresh now · l log what I would do · d my disc entry · x my disc exit · t open the equity chart · 1-5 tabs · q quit
 """
 import json
 import os
@@ -55,6 +55,44 @@ class LogAction(ModalScreen[str]):
         self.dismiss("")
 
 
+class Form(ModalScreen):
+    """A few labelled fields. check(values) returns the record to save, or an error message to show."""
+
+    def __init__(self, heading: str, fields: list[tuple[str, str]], check):
+        super().__init__()
+        self.heading, self.fields, self.check = heading, fields, check
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="form"):
+            yield Label(f"{self.heading}   (Tab between fields, Enter to save, Esc to cancel)")
+            for name, hint in self.fields:
+                yield Input(placeholder=f"{name}: {hint}", id=f"field_{name}")
+            yield Label("", id="form_error")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        values = {name: self.query_one(f"#field_{name}", Input).value.strip() for name, _ in self.fields}
+        result = self.check(values)
+        if isinstance(result, str):
+            self.query_one("#form_error", Label).update(f"[{RED}]{result}[/]")
+        else:
+            self.dismiss(result)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
+def parse_time(text: str) -> pd.Timestamp:
+    """Blank = now; '14:30' = today 14:30; or '2026-11-17 14:30'. Always UTC."""
+    return engine.now_utc().floor("s") if not text else pd.Timestamp(text, tz="UTC")
+
+
+def parse_price(text: str, near: float | None) -> float:
+    price = float(text)
+    if near and abs(price / near - 1) > 0.1:          # catches typos like 61.25 for 612.5
+        raise ValueError(f"price {price} is more than 10% from the market ({near:.2f})")
+    return price
+
+
 class Dashboard(App):
     TITLE = "wheat-corn · live paper dashboard"
     CSS = """
@@ -70,12 +108,15 @@ class Dashboard(App):
     Sparkline { height: 6; margin: 1 0; }
     DataTable { height: auto; max-height: 30; }
     #dialog { width: 80; height: 7; border: heavy #58a6ff; background: #161b22; padding: 1; }
-    LogAction { align: center middle; }
+    #form { width: 90; height: auto; border: heavy #58a6ff; background: #161b22; padding: 1; }
+    LogAction, Form { align: center middle; }
     """
     BINDINGS = [Binding("r", "refresh", "refresh now"), Binding("l", "log_action", "log my action"),
+                Binding("d", "disc_entry", "disc entry"), Binding("x", "disc_exit", "disc exit"),
                 Binding("t", "open_chart", "equity chart"), Binding("1", "tab('live')", "live"),
                 Binding("2", "tab('history')", "history"), Binding("3", "tab('tearsheet')", "tear sheet"),
-                Binding("4", "tab('mylog')", "my log"), Binding("q", "quit", "quit")]
+                Binding("4", "tab('mylog')", "my log"), Binding("5", "tab('disc')", "disc entries"),
+                Binding("q", "quit", "quit")]
 
     def __init__(self):
         super().__init__()
@@ -106,6 +147,9 @@ class Dashboard(App):
                 yield Static(id="tearsheet_note")
             with TabPane("My log [4]", id="mylog"):
                 yield DataTable(id="mylog_table", zebra_stripes=True)
+            with TabPane("Disc entries [5]", id="disc"):
+                yield DataTable(id="disc_table", zebra_stripes=True)
+                yield Static(id="disc_note")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -119,6 +163,14 @@ class Dashboard(App):
                                                                 "exit", "net c", "slow")
         self.query_one("#tearsheet_table", DataTable).add_columns("measure", "forward", "walk-forward expectation")
         self.query_one("#mylog_table", DataTable).add_columns("time (UTC)", "wheat", "z", "open", "what I would do")
+        self.query_one("#disc_table", DataTable).add_columns(
+            "id", "market", "side", "my entry (UTC)", "my price", "model entry", "model price", "entry edge c",
+            "my exit", "model exit", "exit edge c", "my c", "model c", "note")
+        self.query_one("#disc_note", Static).update(
+            "\nd = log a disc entry, x = log its exit. Saved append-only in forward_ledger/disc_trades.jsonl.\n"
+            "Wheat is matched to the anchored rule's trade on the same side entered within 2 h of yours.\n"
+            "Edge = cents better than the model (+ = you did better). my c / model c = before costs, open trades "
+            "marked to the last price.\nBeans: price only, no model yet (LSE has no soybean meal or oil for the crush fair value).")
         if engine.STATE_FILE.exists():
             self.show(json.loads(engine.STATE_FILE.read_text()))
         self.load_events()
@@ -168,7 +220,8 @@ class Dashboard(App):
         self.query_one("#market", Static).update(
             f"Wheat      {a['wheat']:>9.2f} c\nCorn       {a['corn']:>9.2f} c\n"
             f"Fair value {a['fair_value']:>9.2f} c   wheat {money(a['gap_c'], 1)} c vs fair value\n"
-            f"Slow (K20) gap {number(a['slow_gap_c'], '{:+.1f}')} c   next roll window from {a['next_roll_window_from']}")
+            f"Slow (K20) gap {number(a['slow_gap_c'], '{:+.1f}')} c   next roll window from {a['next_roll_window_from']}\n"
+            f"Beans      {number(state.get('beans', {}).get('price'), '{:>9.2f}')} c   (price only, no fair value yet)")
         z = a["z"]
         if not a["tradable"] or z is None:
             zone = f"[{AMBER}]NOT TRADABLE (roll window / warm-up)[/]"
@@ -210,6 +263,7 @@ class Dashboard(App):
         self.show_verdict(a)
         self.show_history(a)
         self.show_tearsheet(a)
+        self.load_disc()
 
     def show_verdict(self, a: dict) -> None:
         perf, expected = a["performance"], a["expected"]
@@ -280,6 +334,78 @@ class Dashboard(App):
                 record = json.loads(line)
                 table.add_row(record["time"][:16], f"{record['wheat']:.2f}", number(record["z"], "{:+.2f}"),
                               str(record["open_positions"]), record["text"])
+
+    # ---- my discretionary trades, next to the model's
+    def action_disc_entry(self) -> None:
+        if self.state is None:
+            return
+        state = self.state
+        existing = engine.disc_trades(state)
+        next_id = max((t["id"] for t in existing), default=0) + 1
+
+        def check(values: dict):
+            market = {"w": "wheat", "b": "beans"}.get(values["market"][:1].lower())
+            side = {"l": "long", "s": "short"}.get(values["side"][:1].lower())
+            if market is None or side is None:
+                return "market must be wheat or beans, side long or short"
+            near = state["anchored"]["wheat"] if market == "wheat" else state.get("beans", {}).get("price")
+            try:
+                price, time = parse_price(values["price"], near), parse_time(values["time"])
+            except ValueError as error:
+                return f"{error}"
+            if time > engine.now_utc():
+                return "time is in the future"
+            return {"event": "open", "id": next_id, "market": market, "side": side, "entry_time": str(time),
+                    "entry_price": price, "note": values["note"]}
+
+        self.push_screen(Form(f"Disc entry #{next_id}", [("market", "wheat / beans"), ("side", "long / short"),
+                                                         ("price", "my fill, cents"), ("time", "UTC, blank = now, or 14:30"),
+                                                         ("note", "why (optional)")], check), self.save_disc)
+
+    def action_disc_exit(self) -> None:
+        if self.state is None:
+            return
+        state = self.state
+        open_trades = {t["id"]: t for t in engine.disc_trades(state) if t["open"]}
+
+        def check(values: dict):
+            try:
+                trade = open_trades[int(values["id"])]
+            except (ValueError, KeyError):
+                return f"id must be one of the open disc trades: {sorted(open_trades) or 'none open'}"
+            near = state["anchored"]["wheat"] if trade["market"] == "wheat" else state.get("beans", {}).get("price")
+            try:
+                price, time = parse_price(values["price"], near), parse_time(values["time"])
+            except ValueError as error:
+                return f"{error}"
+            if time > engine.now_utc() or time < pd.Timestamp(trade["entry_time"]):
+                return "exit time must be after the entry and not in the future"
+            return {"event": "close", "id": trade["id"], "exit_time": str(time), "exit_price": price}
+
+        self.push_screen(Form(f"Disc exit (open: {sorted(open_trades) or 'none'})",
+                              [("id", "which disc trade"), ("price", "my exit fill, cents"),
+                               ("time", "UTC, blank = now, or 14:30")], check), self.save_disc)
+
+    def save_disc(self, record: dict | None) -> None:
+        if record:
+            engine.log_disc(record)
+            self.load_disc()
+            self.action_tab("disc")
+
+    def load_disc(self) -> None:
+        table = self.query_one("#disc_table", DataTable)
+        table.clear()
+        if self.state is None:
+            return
+        for row in reversed(engine.disc_trades(self.state)):
+            model = row["model"] or {}
+            model_exit = model.get("exit_price")
+            table.add_row(str(row["id"]), row["market"], row["side"], row["entry_time"][5:16], f"{row['entry_price']:.2f}",
+                          model.get("entry_time", "")[5:16] or ("no model trade" if row["market"] == "wheat" else "no model"),
+                          number(model.get("entry_price")), money(row["entry_edge_c"], 1),
+                          "open" if row["open"] else f"{row['exit_price']:.2f}",
+                          ("open" if model and model_exit is None else number(model_exit)),
+                          money(row["exit_edge_c"], 1), money(row["my_c"], 1), money(row["model_c"], 1), row["note"])
 
     def action_open_chart(self) -> None:
         path = engine.LIVE_DIR / "equity.png"

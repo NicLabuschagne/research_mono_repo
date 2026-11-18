@@ -105,6 +105,7 @@ def anchored_state(cfg, bars, features) -> dict:
     history_rows = [{"entry_time": str(t.entry_time), "side": "long" if t.side > 0 else "short", "entry_number": int(t.rung),
                      "z_at_signal": float(t.z_at_signal), "entry_price": float(t.entry_price),
                      "exit_time": "" if t.status != "closed" else str(t.exit_time), "exit_reason": t.exit_reason if t.status == "closed" else t.status,
+                     "exit_price": float(t.entry_price + t.side * t.move_c) if t.status == "closed" else None,
                      "net_c": float(t.net_c), "slow_agrees": not bool(t.disagree)} for t in history.itertuples()]
 
     fnds = wheat_first_notice_days(bars.index[-1].year, bars.index[-1].year + 1)
@@ -195,6 +196,61 @@ def update_ledger(cfg, state: dict) -> list[str]:
     return events
 
 
+# ---- my discretionary trades ("disc entries"), next to the model. Append-only like the ledger: one "open" line per
+# trade and later one "close" line with the same id. Prices in cents; comparisons are before costs.
+DISC_FILE = STRATEGY_DIR / "forward_ledger" / "disc_trades.jsonl"
+MATCH_WINDOW = pd.Timedelta(hours=2)      # a model trade on the same side entered within 2 h of mine = "the model's trade"
+BEANS_SYMBOL = "SOYBEANS.F"               # LSE has beans but no meal / oil, so no bean fair value yet: price only
+
+
+def log_disc(record: dict) -> None:
+    DISC_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with DISC_FILE.open("a") as file:
+        file.write(json.dumps({"logged_utc": str(now_utc().floor("s")), **record}) + "\n")
+
+
+def disc_trades(state: dict) -> list[dict]:
+    """Each discretionary trade with my result and, for wheat, the anchored rule's nearest trade on the same side.
+    entry edge = how many cents better I got in than the model; exit edge = how many cents better I got out."""
+    if not DISC_FILE.exists():
+        return []
+    lines = [json.loads(line) for line in DISC_FILE.read_text().splitlines() if line.strip()]
+    trades = {line["id"]: {**line, "exit_time": None, "exit_price": None} for line in lines if line["event"] == "open"}
+    for line in lines:
+        if line["event"] == "close" and line["id"] in trades:
+            trades[line["id"]].update(exit_time=line["exit_time"], exit_price=line["exit_price"])
+    price_now = {"wheat": state["anchored"]["wheat"], "beans": state.get("beans", {}).get("price")}
+
+    rows = []
+    for trade in trades.values():
+        sign = 1 if trade["side"] == "long" else -1
+        is_open = trade["exit_price"] is None
+        mark = price_now[trade["market"]] if is_open else trade["exit_price"]
+        row = {**trade, "open": is_open, "my_c": None if mark is None else sign * (mark - trade["entry_price"]),
+               "model": None, "model_c": None, "entry_edge_c": None, "exit_edge_c": None}
+        if trade["market"] == "wheat":
+            entry = pd.Timestamp(trade["entry_time"])
+            near = [h for h in state["anchored"]["history"]
+                    if h["side"] == trade["side"] and abs(pd.Timestamp(h["entry_time"]) - entry) <= MATCH_WINDOW]
+            if near:
+                model = min(near, key=lambda h: abs(pd.Timestamp(h["entry_time"]) - entry))
+                model_mark = model["exit_price"] if model.get("exit_price") is not None else price_now["wheat"]
+                row.update(model=model, model_c=sign * (model_mark - model["entry_price"]),
+                           entry_edge_c=sign * (model["entry_price"] - trade["entry_price"]))
+                if not is_open and model.get("exit_price") is not None:
+                    row["exit_edge_c"] = sign * (trade["exit_price"] - model["exit_price"])
+        rows.append(row)
+    return rows
+
+
+def bean_quote() -> dict:
+    """Last beans price (the newest 15-minute bar, possibly still forming: a mark, not a signal)."""
+    import os
+    from lse import LSE
+    bar = LSE(api_key=os.environ["LSE_API_KEY"]).candles(BEANS_SYMBOL, "15m", limit=1, order="desc")[0]
+    return {"price": float(bar["close"]), "bar_utc": bar["timestamp"]}
+
+
 def events_between(old: dict | None, new: dict) -> list[str]:
     """What changed since the last update, in words."""
     if old is None:
@@ -258,8 +314,15 @@ def update(fetch_new: bool = True) -> dict:
              "fetched": fetch_new, "fetch_log": [line for line in log.getvalue().splitlines() if line.strip()],
              "anchored": anchored_state(cfg, bars, features), "locked": locked_state(cfg, evaluate, bars, features)}
     old = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else None
+    bean_events = []
+    state["beans"] = (old or {}).get("beans", {})
+    if fetch_new:
+        try:                                        # a beans failure must not stop the wheat update
+            state["beans"] = bean_quote()
+        except Exception as error:
+            bean_events.append(f"BEANS QUOTE FAILED: {error}")
     revised = [line for line in state["fetch_log"] if "revised" in line and " 0 closes revised" not in line]
-    append_events(events_between(old, state) + revised + update_ledger(cfg, state))
+    append_events(events_between(old, state) + revised + bean_events + update_ledger(cfg, state))
     STATE_FILE.write_text(json.dumps(state, indent=1, default=str).replace("NaN", "null"))
     equity_chart(state)
     return state
