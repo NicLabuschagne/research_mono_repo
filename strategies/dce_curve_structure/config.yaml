@@ -1,0 +1,26 @@
+data_path: data/processed/<file>.parquet
+
+split:
+  development_start: 2020-01-01
+  holdout_start: 2024-01-01
+  holdout_end: null
+
+strategy:                 # selected params; every grid name must be a field of StrategyConfig
+  lookback: 20
+  threshold: 2.0
+  cost_bps: 1.0           # stress, keep out of the grid
+
+validation:
+  n_folds: 6
+  periods_per_year: 252
+  grid:
+    lookback: [10, 20, 40]
+    threshold: [1.5, 2.0, 2.5]
+  heatmaps:
+    - [lookback, threshold]
+
+gates:
+  min_mean_sharpe: 0.5
+  min_pct_folds_positive: 0.6
+  min_trades: 100
+  min_wf_oos_sharpe: 0.3
